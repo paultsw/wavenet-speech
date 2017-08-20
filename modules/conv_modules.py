@@ -1,7 +1,7 @@
 """
 Convolutional modules.
 
-TODO: consider importing this from Seq2Seq/modules/causal_conv1d.y
+TODO: consider importing this from Seq2Seq/modules/causal_conv1d.py
 """
 import torch
 import torch.nn as nn
@@ -11,6 +11,9 @@ class CausalConv1d(nn.Module):
     """
     Define a causal Conv1d as a special Conv1d that shifts the outputs
     by a certain amount.
+
+    This module preserves temporal resolution (i.e. the number of timesteps
+    in the input and output sequences is invariant).
     """
     def __init__(in_channels, out_channels, kernel_width, dilation):
         """Create underlying causal convolution."""
