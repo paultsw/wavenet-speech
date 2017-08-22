@@ -3,37 +3,90 @@ A classifier network module to be stacked on top of the WaveNet.
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.autograd import Variable
 
+from modules.conv_ops import reshape_in, reshape_out
 
-class WaveNetClassifer(nn.Module):
+class WaveNetClassifier(nn.Module):
     """
-    Specification of a classifer network; used to turn a WaveNet into a sequence classifer.
+    Specification of a classifier network; used to turn a WaveNet into a sequence classifier, e.g. for Speech-to-Text.
     """
-    def __init__(self, num_layers):
+    def __init__(self, in_dim, num_labels, layers,
+                 pool_kernel_size=2, pool_padding=0,
+                 input_kernel_size=2, input_padding=0, input_dilation=1,
+                 out_kernel_size=2, out_padding=0, out_dilation=1,
+                 softmax=True):
         """
         Constructor for WaveNetClassifier.
 
         Args:
-        * num_layers: number of (non-causal) convolutional layers to stack.
+        * in_dim: python int; the dimensionality of the input sequence.
+        * num_labels: the number of labels in the softmax distribution at the output.
+        * layers: list of (non-causal) convolutional layers to stack. Each entry is of the form
+          (in_channels, out_channels, kernel_size, padding, dilation).
+        * pool_kernel_size: python int denoting the receptive field for mean-pooling.
+        * pool_padding: python int denoting the pad amount for mean-pooling.
+        * input_kernel_size:
+        * input_padding:
+        * input_dilation:
+        * out_kernel_size: python int denoting the size of the kernel for the output conv layer.
+        * out_padding: python int denoting the amount of padding to use on either side of the output conv layer.
+        * out_dilation: python int denoting the amount of dilation to use for the output conv layer's kernel.
+        * softmax: if True, softmax the output layer before returning. If False, return un-normalized sequence.
         """
         ### parent constructor
         super(WaveNetClassifier, self).__init__()
 
         ### attributes
-        self.num_layers = num_layers
+        self.in_dim = in_dim
+        self.num_labels = num_labels
+        # mean pooling:
+        self.pool_kernel_size = pool_kernel_size
+        self.pool_padding = pool_padding
+        # input 1x1Conv layer:
+        self.input_kernel_size = input_kernel_size
+        self.input_padding = input_padding
+        self.input_dilation = input_dilation
+        # convolutional stack:
+        self.layers = layers
+        # output layer
+        self.out_kernel_size = out_kernel_size
+        self.out_padding = out_padding
+        self.out_dilation = out_dilation
+        self.softmax = softmax
 
         ### submodules
-        # TODO: Figure out arguments for each of the following:
-        _modules = [(
-            'meanpool', nn.AvgPool1d(kernel_size=None, stride=None, padding=0, None, None)
-        )]
-        for k in range(num_layers):
-            _modules.append((
-                'conv{}'.format(l), nn.Conv1d(None,None,None,None)
-            ))
-        self.classifier_stack = nn.Sequential(OrderedDict(_modules))
+        # mean pooling layer:
+        self.mean_pool = nn.AvgPool1d(kernel_size=pool_kernel_size, padding=pool_padding)
+
+        # conv1d stack:
+        input_conv1d = nn.Conv1d(in_dim, layers[0][0], input_kernel_size, padding=input_padding, dilation=input_dilation)
+        stack = [nn.Conv1d(c_in, c_out, k, padding=pad, dilation=d) for (c_in, c_out, k, pad, d) in layers]
+        self.convolution_stack = nn.Sequential(input_conv1d, *stack)
+
+        # output layer:
+        self.output_conv1d = nn.Conv1d(layers[-1][1], num_labels, out_kernel_size, padding=out_padding, dilation=out_dilation)
+
 
     def forward(self, seq):
-        """Run the sequence classification stack on an input sequence."""
-        return self.classifier_stack(seq)
+        """
+        Run the sequence classification stack on an input sequence.
+        
+        Args:
+        * seq: a FloatTensor variable of shape (batch_size, in_seq_dim, in_seq_length).
+        
+        Returns:
+        * predictions: a FloatTensor variable of shape (batch_size, out_seq_dim, out_seq_length).
+        
+        (In general, it is hard to predict the output sequence length if the padding/dilation rates are not
+        chosen to specifically preserve temporal dimensionality.)
+        """
+        mean_pool_seq = self.mean_pool(seq)
+        conv_stack_out = self.convolution_stack(mean_pool_seq)
+        output_seq = self.output_conv1d(conv_stack_out)
+        
+        if not self.softmax: return output_seq
+        
+        reshaped_output_seq, _axes = reshape_in(output_seq)
+        return reshape_out(F.softmax(reshaped_output_seq), _axes)
