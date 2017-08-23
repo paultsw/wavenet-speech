@@ -13,10 +13,8 @@ class WaveNetClassifier(nn.Module):
     Specification of a classifier network; used to turn a WaveNet into a sequence classifier, e.g. for Speech-to-Text.
     """
     def __init__(self, in_dim, num_labels, layers,
-                 pool_kernel_size=2, pool_padding=0,
-                 input_kernel_size=2, input_padding=0, input_dilation=1,
-                 out_kernel_size=2, out_padding=0, out_dilation=1,
-                 softmax=True):
+                 pool_kernel_size=2, input_kernel_size=2, input_dilation=1,
+                 out_kernel_size=2, out_dilation=1, softmax=True):
         """
         Constructor for WaveNetClassifier.
 
@@ -26,12 +24,9 @@ class WaveNetClassifier(nn.Module):
         * layers: list of (non-causal) convolutional layers to stack. Each entry is of the form
           (in_channels, out_channels, kernel_size, padding, dilation).
         * pool_kernel_size: python int denoting the receptive field for mean-pooling.
-        * pool_padding: python int denoting the pad amount for mean-pooling.
         * input_kernel_size:
-        * input_padding:
         * input_dilation:
         * out_kernel_size: python int denoting the size of the kernel for the output conv layer.
-        * out_padding: python int denoting the amount of padding to use on either side of the output conv layer.
         * out_dilation: python int denoting the amount of dilation to use for the output conv layer's kernel.
         * softmax: if True, softmax the output layer before returning. If False, return un-normalized sequence.
         """
@@ -43,30 +38,34 @@ class WaveNetClassifier(nn.Module):
         self.num_labels = num_labels
         # mean pooling:
         self.pool_kernel_size = pool_kernel_size
-        self.pool_padding = pool_padding
+        self.pool_padding = 0
         # input 1x1Conv layer:
         self.input_kernel_size = input_kernel_size
-        self.input_padding = input_padding
+        self.input_padding = _autopad(input_kernel_size, input_dilation)
         self.input_dilation = input_dilation
         # convolutional stack:
         self.layers = layers
         # output layer
         self.out_kernel_size = out_kernel_size
-        self.out_padding = out_padding
+        self.out_padding = _autopad(out_kernel_size, out_dilation)
         self.out_dilation = out_dilation
         self.softmax = softmax
 
         ### submodules
         # mean pooling layer:
-        self.mean_pool = nn.AvgPool1d(kernel_size=pool_kernel_size, padding=pool_padding)
+        self.mean_pool = nn.AvgPool1d(kernel_size=pool_kernel_size, padding=self.pool_padding)
+
+        # input layer:
+        input_conv1d = nn.Conv1d(in_dim, layers[0][0], input_kernel_size, padding=self.input_padding,
+                                 dilation=input_dilation)
 
         # conv1d stack:
-        input_conv1d = nn.Conv1d(in_dim, layers[0][0], input_kernel_size, padding=input_padding, dilation=input_dilation)
-        stack = [nn.Conv1d(c_in, c_out, k, padding=pad, dilation=d) for (c_in, c_out, k, pad, d) in layers]
+        stack = [nn.Conv1d(c_in, c_out, k, padding=_autopad(k,d), dilation=d) for (c_in,c_out,k,d) in layers]
         self.convolution_stack = nn.Sequential(input_conv1d, *stack)
 
         # output layer:
-        self.output_conv1d = nn.Conv1d(layers[-1][1], num_labels, out_kernel_size, padding=out_padding, dilation=out_dilation)
+        self.output_conv1d = nn.Conv1d(layers[-1][1], num_labels, out_kernel_size, padding=self.out_padding,
+                                       dilation=out_dilation)
 
 
     def forward(self, seq):
@@ -90,3 +89,17 @@ class WaveNetClassifier(nn.Module):
         
         reshaped_output_seq, _axes = reshape_in(output_seq)
         return reshape_out(F.softmax(reshaped_output_seq), _axes)
+
+
+# ===== ===== ===== ===== Helper Functions: automatically calculate correct padding amounts
+from math import floor, ceil
+def _autopad(k,d):
+    """
+    Given dilation and kernel width, automatically calculate correct amount to pad on left+right
+    needed to preserve temporal dimensionality.
+    """
+    pad_times_2 = (k-1) * d
+    if (pad_times_2 % 2 == 1):
+        return int(floor(pad_times_2 / 2)), int(ceil(pad_times_2 / 2))
+    else:
+        return int(pad_times_2 / 2), int(pad_times_2 / 2)

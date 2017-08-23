@@ -1,0 +1,39 @@
+{
+    "model": {
+	"base": {
+	    "signal_dim": 256,
+	    "entry_kwidth": 2,
+	    "layers": []
+	},
+	"classifier": {
+	    "num_labels": 8,
+	    "layers": [],
+	    "downsample": 32
+	}
+    },
+    "training": {
+	"num_epochs" : 40,
+	"max_iters" : 100000,
+	"print_every" : 25,
+	"save_every" : 1000,
+	"print_samples" : true,
+	"dataset": "./data",
+	"save_dir" : "./runs/test_run/",
+	"restore_wavenet_path" : null,
+	"restore_classifier_path": null,
+	"optim": {
+	    "base": {
+		"type": "adam",
+		"learning_rate": 0.01,
+		"wd": 0.0001,
+		"max_grad_norm": 1.0
+	    },
+	    "classifier": {
+		"type": "adam",
+		"learning_rate": 0.01,
+		"wd": 0.0001,
+		"max_grad_norm": 1.0
+	    }
+	}
+    }
+}

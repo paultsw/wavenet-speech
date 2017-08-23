@@ -14,16 +14,22 @@ seq_length = 10000
 dilations = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
-layers = [(seq_dim, seq_dim, 2, 0, d) for d in dilations]
+layers = [(seq_dim, seq_dim, 2, d) for d in dilations]
+downsample_rate = 3
 
 ### construct fake data:
 input_seq = Variable(torch.randn(batch_size, seq_dim, seq_length))
 
 ### construct wavenet classifier/transcriptor stack & run:
-classifier = WaveNetClassifier(seq_dim, num_labels, layers)
+classifier = WaveNetClassifier(seq_dim, num_labels, layers, pool_kernel_size=downsample_rate)
 out_dist_seq = classifier(input_seq)
 
 ### print outputs, sizes, etc:
+print("Downsample rate:")
+print(downsample_rate)
+print("Input Sequence Size:")
+print(input_seq.size())
+print("Output Sequence Size:")
 print(out_dist_seq.size())
 #print(out_dist_seq)
 
