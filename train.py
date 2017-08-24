@@ -10,7 +10,7 @@ from warpctc_pytorch import CTCLoss
 # custom modules:
 from modules.wavenet import WaveNet
 from modules.classifier import WaveNetClassifier
-from utils.loader import Loader
+from utils.loader import OverfitLoader # [TODO: swap this with Loader class once completed]
 from utils.logging import Logger
 from utils.config_tools import json_to_config, config_to_json
 
@@ -25,14 +25,14 @@ def wavenet_train_step(wave, classifier, nll_fn, ctc_fn, sig, seq, wave_opt, cla
     wave_opt.zero_grad()
     class_opt.zero_grad()
     
-    # 1. run wavenet on forward-shifted signal:
-    wavenet_pred = wave(sig[0:-1]) # [CHECK]
+    # 1. run wavenet on signal:
+    wavenet_pred = wave(sig[:,:,0:-1])
 
     # 2. run classifier on wavenet output distribution:
     classifier_pred = classifier(wavenet_pred)
 
     # 3. compute NLL between true signal and wavenet output:
-    wavenet_loss = nll_fn(wavenet_pred, sig)
+    wavenet_loss = nll_fn(wavenet_pred, sig[:,:,1:])
 
     # 4. compute CTC loss between true seq and predicted seq:
     classifier_loss = ctc_fn(classifier_pred, seq)
@@ -64,7 +64,7 @@ def train(config):
     """
     Main training loop.
     """
-    ### unpack configuration settings:
+    ###===== construct wavenet:
     # base wavenet settings:
     signal_dim = config['model']['base']['signal_dim']
     entry_kwidth = config['model']['base']['entry_kwidth']
@@ -73,41 +73,40 @@ def train(config):
     num_labels = config['model']['classifier']['num_labels']
     classifier_layers = config['model']['classifier']['layers']
     downsample_rate = config['model']['classifier']['downsample']
-    # training settings:
-    optim_base_cfg = config['training']['optim']['base']
-    optim_classifier_cfg = config['training']['optim']['classifier']
-    dataset_path = config['training']['dataset']
-    restore_wavenet_path = config['training']['restore_wavenet_path']
-    restore_classifier_path = config['training']['restore_classifier_path']
-    save_dir = config['training']['save_dir']
-    print_every = config['training']['print_every']
-    save_every = config['training']['save_every']
-    num_epochs = config['training']['num_epochs']
-    max_iters = config['training']['max_iters']
-
-    ### construct wavenet:
     wavenet_core = WaveNet(signal_dim, entry_kwidth, wavenet_layers, signal_dim, softmax=True)
     wavenet_class = WaveNetClassifier(signal_dim, num_labels, classifier_layers, pool_kernel_size=downsample)
 
-    ### optionally restore weights to continue training:
+    ###===== optionally restore weights to continue training:
+    restore_wavenet_path = config['training']['restore_wavenet_path']
+    restore_classifier_path = config['training']['restore_classifier_path']
     if restore_wavenet_path is not None:
         wavenet_core.load_state_dict(torch.load_path(restore_wavenet_path, map_location=lambda storage, loc: storage))
     if restore_classifier_path is not None:
         wavenet_class.load_state_dict(torch.load_path(restore_classifier_path, map_location=lambda storage, loc: storage))
 
-    ### construct loss functions:
+    ###===== construct loss functions:
     nll_loss_fn = nn.NLLLoss()
     ctc_loss_fn = CTCLoss()
 
-    ### construct optimizers:
+    ###===== construct optimizers:
+    optim_base_cfg = config['training']['optim']['base']
+    optim_classifier_cfg = config['training']['optim']['classifier']
     waveopt = build_optimizer(optim_base_cfg, wavenet_class.parameters())
     classopt = build_optimizer(optim_classifier_cfg, wavenet_core.parameters())
 
-    ### construct data loader and logging object:
-    dataset = Loader(dataset_path, None, None) # [FIX ARGS ONCE COMPLETED]
+    ###===== construct data loader and logging object:
+    train_dataset_path = config['training']['training_data']
+    validation_dataset_path = config['training']['validation_data']
+    save_dir = config['training']['save_dir']
+    # [TODO: swap this with a real loader once completed]
+    dataset = OverfitLoader("./data/overfit/signal.npy", "./data/overfit/read.npy")
     logger = Logger(save_dir)
 
-    ### run training loop:
+    ###===== run training loop:
+    print_every = config['training']['print_every']
+    save_every = config['training']['save_every']
+    num_epochs = config['training']['num_epochs']
+    max_iters = config['training']['max_iters']
     timestep = 0
     try:
         for signal, sequence in dataset:

@@ -3,11 +3,11 @@
 	"base": {
 	    "signal_dim": 256,
 	    "entry_kwidth": 2,
-	    "layers": []
+	    "layers": [(), (), ()]
 	},
 	"classifier": {
 	    "num_labels": 8,
-	    "layers": [],
+	    "layers": [(), (), ()],
 	    "downsample": 32
 	}
     },
@@ -17,7 +17,8 @@
 	"print_every" : 25,
 	"save_every" : 1000,
 	"print_samples" : true,
-	"dataset": "./data",
+	"training_data": "./data",
+	"validation_data": "./data",
 	"save_dir" : "./runs/test_run/",
 	"restore_wavenet_path" : null,
 	"restore_classifier_path": null,

@@ -22,10 +22,10 @@ class WaveNetClassifier(nn.Module):
         * in_dim: python int; the dimensionality of the input sequence.
         * num_labels: the number of labels in the softmax distribution at the output.
         * layers: list of (non-causal) convolutional layers to stack. Each entry is of the form
-          (in_channels, out_channels, kernel_size, padding, dilation).
-        * pool_kernel_size: python int denoting the receptive field for mean-pooling.
-        * input_kernel_size:
-        * input_dilation:
+          (in_channels, out_channels, kernel_size, dilation).
+        * pool_kernel_size: python int denoting the receptive field for mean-pooling. This determines downsample rate.
+        * input_kernel_size: size of the internal kernel of the conv1d going from input to conv-stack.
+        * input_dilation: dilation for conv1d going from input to conv-stack.
         * out_kernel_size: python int denoting the size of the kernel for the output conv layer.
         * out_dilation: python int denoting the amount of dilation to use for the output conv layer's kernel.
         * softmax: if True, softmax the output layer before returning. If False, return un-normalized sequence.

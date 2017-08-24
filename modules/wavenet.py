@@ -64,7 +64,7 @@ class WaveNet(nn.Module):
 
         # output stack: 1x1 Conv => ReLU => 1x1 Conv
         self.output_stack = nn.Sequential(
-            nn.Conv1d(layers[-1][1], out_dim, kernel_size=1, padding=0, dilation=1),
+            nn.Conv1d(out_dim, out_dim, kernel_size=1, padding=0, dilation=1),
             nn.ReLU(),
             nn.Conv1d(out_dim, out_dim, kernel_size=1, padding=0, dilation=1))
 
