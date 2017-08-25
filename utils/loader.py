@@ -1,30 +1,95 @@
 """
 Data-loading class.
 """
+import h5py
 import torch
 import torch.utils.data as data
 import numpy as np
 
+# ===== ===== HDF5 Loader class ===== =====
 class Loader(object):
     """
-    Signal and base-sequence loader.
+    Signal and base-sequence loader. Takes a list of datasets in the form of an HDF5 and swaps between them.
 
-    [TODO: finish this; primary challenge is the difference in temporal dimensionality of the sequences.
-     Consider loading batches of approximately the same length?]
+    At each call of fetch(), this loader does the following:
+    1) randomly chooses a bucket;
+    2) randomly chooses a subset of bucket.dataset_size of cardinality `batch_size`;
+    3) loads the corresponding batch of signals and sequences.
     """
-    def __init__(self):
-        pass
+    def __init__(self, dataset_path, batch_size=1, max_iters=100, num_epochs=1):
+        """Open handle to HDF5 dataset file."""
+        self.dataset_path = dataset_path
+        self._dataset = h5py.File(dataset_path, 'r')
+        self.batch_size = batch_size
+        self.num_epochs = num_epochs
+        self.max_iters = max_iters
+        self._load_metadata()
+        self.counter = 0
+        self.epochs = 0
+
+    def close(self):
+        """Close the dataset."""
+        self._dataset.close()
 
     def fetch(self):
-        pass
+        """Fetch a random batch from the dataset."""
+        self._maybe_stop()
+        pass # [TBD: use `fetch_specific` and random permutations to choose a random batch from some bucket]
+        self._tick()
+
+    def fetch_specific(self, bucket_id, data_num):
+        """Fetch a specific entry."""
+        return (self._dataset['bucket_{}'.format(bucket_id)]['signals']['{}'.format(data_num)][:],
+                self._dataset['bucket_{}'.format(bucket_id)]['reads']['{}'.format(data_num)][:])
+
+    # helper functions
+    def _load_metadata(self):
+        """Load metadata values as attributes."""
+        self._num_buckets = self._dataset['meta'].attrs['num_buckets']
+        self._bucket_size = self._dataset['meta'].attrs['bucket_size']
+        self._signals_path = self._dataset['meta'].attrs['signals_path']
+        self._reads_path = self._dataset['meta'].attrs['reads_path']
+        self._lengths_tsv_path = self._dataset['meta'].attrs['lengths_tsv_path']
+        self._buckets_data = {}
+        for k in range(self._num_buckets):
+            self._buckets_data[k] = {
+                'dataset_size': self._dataset['bucket_{}'.format(k)].attrs['dataset_size'],
+                'max_read_length': self._dataset['bucket_{}'.format(k)].attrs['max_read_length'],
+                'min_read_length': self._dataset['bucket_{}'.format(k)].attrs['min_read_length'],
+                'max_signal_length': self._dataset['bucket_{}'.format(k)].attrs['max_signal_length'],
+                'min_signal_length': self._dataset['bucket_{}'.format(k)].attrs['min_signal_length'],
+                # n.b.: you have to index these to load them into memory; this is a space-saving
+                # technique by design
+                'read_lengths': self._dataset['bucket_{}'.format(k)]['read_lengths'],
+                'signal_lengths': self._dataset['bucket_{}'.format(k)]['signal_lengths'],
+            }
+        self._num_sequences = sum([self._buckets_data[k]['dataset_size'] for k in range(self._num_buckets)])
+
+    def _tick(self):
+        """Update counter and maybe update epoch"""
+        self.counter += 1
+        if (self.counter != 0 and self.counter % self._num_sequences == 0): self.epochs += 1
+
+    def _maybe_stop(self):
+        """Return True if we are done; return False otherwise"""
+        if self.epochs == self.num_epochs or self.counter == self.max_iters:
+            self.close()
+            raise StopIteration
 
 
+# ===== ===== Load the same data over and over again: ===== =====
 class OverfitLoader(object):
     """
     Loads a single (signal, base-sequence) pair over and over again.
     """
-    def __init__(self, signal_path, sequence_path, batch_size=16, dataset_size=16, num_levels=256):
+    def __init__(self, signal_path, sequence_path, batch_size=1, num_levels=256):
         """Construct a tensor dataset."""
+        # store attributes for later reference:
+        self.signal_path = signal_path
+        self.sequence_path = sequence_path
+        self.batch_size = batch_size
+        self.num_levels = num_levels
+        
         signal_tensor = torch.from_numpy(np.load(signal_path)).unsqueeze(1)
         one_hot_signal_tensor = torch.zeros(signal_tensor.size(0), num_levels)
         one_hot_signal_tensor.scatter_(1, signal_tensor, 1.)
@@ -32,13 +97,12 @@ class OverfitLoader(object):
         sequence_tensor = torch.from_numpy(np.load(sequence_path))
         
         # stack the signal tensor multiple times:
-        stacked_signal_tensor = torch.stack([one_hot_signal_tensor] * dataset_size, dim=0).unsqueeze(2)
+        self._stacked_signal_tensor = torch.stack([one_hot_signal_tensor] * batch_size, dim=0)
 
         # stack the sequence tensor multiple times:
-        stacked_sequence_tensor = torch.stack([sequence_tensor] * dataset_size, dim=0)
+        self._stacked_sequence_tensor = torch.stack([sequence_tensor] * batch_size, dim=0)
 
-        # torch dataset:
-        self.dataset = data.TensorDataset(stacked_signal_tensor, stacked_sequence_tensor)
-        
-        # torch data loader:
-        self.loader = data.DataLoader(self.dataset, batch_size=batch_size, shuffle=False)
+
+    def fetch(self):
+        """Return the same batch over and over again."""
+        return (self._stacked_signal_tensor, self._stacked_sequence_tensor)
