@@ -9,6 +9,12 @@ The fundamental difference between "vanilla" WaveNet and the speech recognition 
 
 The first loss function is the typical (log-likelihood) loss of the WaveNet component (say, `Loss1 := NLLLoss(WaveNet(input_sequence))`. The second loss function is the CTC loss on the output of the classifier network (say, `Loss2 := CTCLoss(Classifier(WaveNet(input_sequence)))`. We then minimize the sum `Loss = Loss1 + Loss2` during training.
 
+Requirements
+------------
+* PyTorch v0.2
+* PyTorch bindings for warp_ctc:
+  `https://github.com/SeanNaren/warp-ctc/tree/pytorch_bindings/pytorch_binding/warpctc_pytorch`
+
 WaveNet Architecture
 --------------------
 `(TBD: describe basic WaveNet architecture)`
