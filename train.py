@@ -140,6 +140,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Train a new WaveNet Speech-to-Text model.")
     parser.add_argument("--config", dest="config", help="Path to JSON config file.")
     args = parser.parse_args()
-    config = json_to_cfg(args.config)
+    config = json_to_config(args.config)
     config_to_json(config, os.path.join(config['training']['save_dir'], "config.json"))
-    train(config)
+    #train(config)

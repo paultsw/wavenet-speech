@@ -3,11 +3,11 @@
 	"base": {
 	    "signal_dim": 256,
 	    "entry_kwidth": 2,
-	    "layers": [(), (), ()]
+	    "layers": [[1,1,1,1], [1,1,1,1], [1,1,1,1]]
 	},
 	"classifier": {
 	    "num_labels": 8,
-	    "layers": [(), (), ()],
+	    "layers": [[1,1,1,1]],
 	    "downsample": 32
 	}
     },
