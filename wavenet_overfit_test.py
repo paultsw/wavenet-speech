@@ -15,12 +15,16 @@ signal = torch.load("./data/overfit/one_hot_signal.pth")
 _, dense_signal = torch.max(signal[:,:,1:], dim=1)
 source_seq = Variable(signal)
 target_seq = Variable(dense_signal)
+if torch.cuda.is_available():
+    source_seq = source_seq.cuda()
+    target_seq = target_seq.cuda()
 
 # construct model and optimizer:
 dilations = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
 wavenet = WaveNet(256, 2, [(256, 256, 2, d) for d in dilations], 256, softmax=True)
+if torch.cuda.is_available(): wavenet.cuda()
 learning_rate = 0.01
 wd = 0.0001
 betas = (0.9, 0.999)
