@@ -5,6 +5,7 @@ import h5py
 import torch
 import torch.utils.data as data
 import numpy as np
+import random
 
 # ===== ===== HDF5 Loader class ===== =====
 class Loader(object):
@@ -27,22 +28,65 @@ class Loader(object):
         self.counter = 0
         self.epochs = 0
 
+
     def close(self):
         """Close the dataset."""
         self._dataset.close()
 
+
     def fetch(self):
-        """Fetch a random batch from the dataset."""
+        """
+        Fetch a random batch from the dataset.
+        
+        Performs the following steps:
+        1) choose a random bucket;
+        2) choose a random assortment of (signal,sequence) pairs from bucket in batch format ~ (batch, in-dim, seq-len);
+        3) perform padding;
+        4) convert to torch tensor format;
+        5) return batch.
+        """
+        ### check if we've hit the maximum number of timesteps; if yes, raise StopIteration
         self._maybe_stop()
-        pass # [TBD: use `fetch_specific` and random permutations to choose a random batch from some bucket]
+
+        ### main operations: choose a random bucket and a random set of sequences:
+        bucket = self.random_bucket(self._num_buckets)
+        data_ids = self.random_sequences(self._buckets_data[bucket]['dataset_size'], self.batch_size)
+        return self.fetch_specific_batch(bucket, data_ids)
+        
+        ### update timestep
         self._tick()
 
-    def fetch_specific(self, bucket_id, data_num):
-        """Fetch a specific entry."""
+
+    def fetch_batch(self, bucket_id, data_nums):
+        """
+        Fetch a specific batch.
+
+        Args:
+        * bucket_id: choice of the bucket to fetch from.
+        * data_nums: list of sequence IDs (possibly in np.array([int]) format).
+        """
+        pass
+
+
+    def fetch_one(self, bucket_id, data_num):
+        """
+        Fetch a specific (signal,sequence) pair.
+        """
         return (self._dataset['bucket_{}'.format(bucket_id)]['signals']['{}'.format(data_num)][:],
                 self._dataset['bucket_{}'.format(bucket_id)]['reads']['{}'.format(data_num)][:])
+        
+    ### Static Helper Functions:
+    @staticmethod
+    def random_bucket(num_buckets):
+        """Choose a bucket at random."""
+        return random.random(0,num_buckets-1)
 
-    # helper functions
+    @staticmethod
+    def random_sequences(num_sequences, batch_size):
+        """Choose a batch at random. Randomly chooses an integer list of length `batch_size` from [0,num_sequences)."""
+        return np.random.choice(num_sequences, size=batch_size, replace=False)
+
+    ### Helper Methods:
     def _load_metadata(self):
         """Load metadata values as attributes."""
         self._num_buckets = self._dataset['meta'].attrs['num_buckets']
@@ -90,6 +134,7 @@ class OverfitLoader(object):
         self.batch_size = batch_size
         self.num_levels = num_levels
         
+        # create one-hot encoding of signal:
         signal_tensor = torch.from_numpy(np.load(signal_path)).unsqueeze(1)
         one_hot_signal_tensor = torch.zeros(signal_tensor.size(0), num_levels)
         one_hot_signal_tensor.scatter_(1, signal_tensor, 1.)
