@@ -13,8 +13,8 @@ num_iterations = 100000
 # load signal from data and create dataset:
 signal = torch.load("./data/overfit/one_hot_signal.pth")
 _, dense_signal = torch.max(signal[:,:,1:], dim=1)
-source_seq = Variable(signal)
-target_seq = Variable(dense_signal)
+source_seq = signal
+target_seq = dense_signal
 if torch.cuda.is_available():
     source_seq = source_seq.cuda()
     target_seq = target_seq.cuda()
@@ -25,7 +25,7 @@ dilations = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
 wavenet = WaveNet(256, 2, [(256, 256, 2, d) for d in dilations], 256, softmax=True)
 if torch.cuda.is_available(): wavenet.cuda()
-learning_rate = 0.01
+learning_rate = 0.001
 wd = 0.0001
 betas = (0.9, 0.999)
 optimizer = optim.Adam(wavenet.parameters(), lr=learning_rate, betas=betas, eps=1e-08, weight_decay=wd)
@@ -37,10 +37,10 @@ best_observed_loss = 10**10
 try:
     for step in range(num_iterations):
         optimizer.zero_grad()
-        pred_dist_seq = wavenet(source_seq)
+        pred_dist_seq = wavenet(Variable(source_seq))
         loss = 0.
         for t in range(target_seq.size(1)):
-            loss = loss + loss_fn(pred_dist_seq[:,:,t], target_seq[:,t])
+            loss = loss + loss_fn(pred_dist_seq[:,:,t], Variable(target_seq)[:,t])
         loss.backward()
         optimizer.step()
         if (step % print_every == 0):
