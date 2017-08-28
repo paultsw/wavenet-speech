@@ -48,6 +48,6 @@ try:
 except KeyboardInterrupt:
     print("....Training interrupted.")
 finally:
-    torch.save(wavenet.state_dict(), "./data/overfit/wavenet_overfit_model.pth")
+    torch.save(wavenet.state_dict(), "./runs/overfit/wavenet_overfit_model.pth")
     print("Best observed loss (sampled): {}".format(best_observed_loss))
     
