@@ -32,3 +32,20 @@ print(torch.Size([batch_size, out_channels, seq_length]))
 print(torch.Size([batch_size, out_channels, expected_length]))
 assert (torch.Size([batch_size, out_channels, seq_length]) == out_seq.size())
 assert (torch.Size([batch_size, out_channels, expected_length]) == out_seq.size())
+
+# run overfitting test on constant sequence:
+source_sequence = Variable(torch.ones(batch_size, in_channels, seq_length).mul_(2.))
+target_sequence = Variable(torch.ones(batch_size, out_channels, seq_length).mul_(3.))
+print("===== Attempting to overfit on constant sequences... =====")
+num_iterations = 1000
+print_every = 50
+loss_fn = torch.nn.MSELoss()
+optimizer = torch.optim.Adam(conv.parameters())
+for step in range(num_iterations):
+    optimizer.zero_grad()
+    preds = conv(source_sequence)
+    loss = loss_fn(preds, target_sequence)
+    if step % print_every == 0: print("Loss @ step {0}: {1}".format(step,loss.data[0]))
+    loss.backward()
+    optimizer.step()
+print("... Done. You should see a gradually decreasing loss.")

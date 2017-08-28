@@ -3,6 +3,7 @@ Description of WaveNet module.
 """
 import torch
 import torch.nn as nn
+import torch.nn.init as nn_init
 import torch.nn.functional as F
 from torch.autograd import Variable
 
@@ -52,21 +53,36 @@ class WaveNet(nn.Module):
         # initial undilated causal conv going into the network:
         self.entry_conv1d = CausalConv1d(in_dim, layers[0][0], entry_kwidth, dilation=1)
 
-        # stack of residual blocks forms the core of the network:
+        # a stack of residual blocks forms the core of the network; also
+        # create bottlenecks connecting skip connections to output:
         conv_stack = []
         bottlenecks = []
         for (c_in, c_out, kwidth, dilation) in layers:
             conv_stack.append( ResidualBlock(c_in, c_out, kwidth, dilation) )
-            bottlenecks.append( nn.Sequential(nn.Conv1d(c_out, out_dim, 1, padding=0, dilation=1),
-                                              nn.LeakyReLU(0.01)) )
+            bottlenecks.append(nn.Conv1d(c_out, out_dim, 1, padding=0, dilation=1))
         self.convolutions = nn.ModuleList(conv_stack)
         self.bottlenecks = nn.ModuleList(bottlenecks)
 
         # output stack: 1x1 Conv => ReLU => 1x1 Conv
         self.output_stack = nn.Sequential(
+            nn.LeakyReLU(0.01),
             nn.Conv1d(out_dim, out_dim, kernel_size=1, padding=0, dilation=1),
-            nn.ReLU(),
+            nn.LeakyReLU(0.01),
             nn.Conv1d(out_dim, out_dim, kernel_size=1, padding=0, dilation=1))
+
+        ### initialize all inputs:
+        for p in self.entry_conv1d.parameters():
+            if len(p.size()) > 1: nn_init.kaiming_uniform(p)
+            if len(p.size()) == 1: p.data.zero_()
+        for p in self.convolutions.parameters():
+            if len(p.size()) > 1: nn_init.kaiming_uniform(p)
+            if len(p.size()) == 1: p.data.zero_()
+        for p in self.bottlenecks.parameters():
+            if len(p.size()) == 2: nn_init.eye(p)
+            if len(p.size()) == 1: p.data.zero_()
+        for p in self.output_stack.parameters():
+            if len(p.size()) > 1: nn_init.kaiming_uniform(p)
+            if len(p.size()) == 1: p.data.zero_()
 
 
     def forward(self, signal):

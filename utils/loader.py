@@ -65,7 +65,7 @@ class Loader(object):
         * bucket_id: choice of the bucket to fetch from.
         * data_nums: list of sequence IDs (possibly in np.array([int]) format).
         """
-        pass
+        pass # [TODO: FIX THIS]
 
 
     def fetch_one(self, bucket_id, data_num):
@@ -122,6 +122,7 @@ class Loader(object):
 
 
 # ===== ===== Load the same data over and over again: ===== =====
+# [TODO: deprecate this once the above loader works.]
 class OverfitLoader(object):
     """
     Loads a single (signal, base-sequence) pair over and over again.

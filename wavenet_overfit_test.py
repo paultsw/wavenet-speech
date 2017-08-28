@@ -28,11 +28,11 @@ if torch.cuda.is_available(): wavenet.cuda()
 learning_rate = 0.001
 wd = 0.0001
 betas = (0.9, 0.999)
-optimizer = optim.Adam(wavenet.parameters(), lr=learning_rate, betas=betas, eps=1e-08, weight_decay=wd)
+optimizer = optim.RMSprop(wavenet.parameters(), lr=learning_rate)
 loss_fn = nn.CrossEntropyLoss()
 
 # run training loop and occasionally print losses:
-print_every = 100
+print_every = 20
 best_observed_loss = 10**10
 try:
     for step in range(num_iterations):
