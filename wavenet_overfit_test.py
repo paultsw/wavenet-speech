@@ -29,6 +29,7 @@ learning_rate = 0.001
 wd = 0.0001
 betas = (0.9, 0.999)
 optimizer = optim.RMSprop(wavenet.parameters(), lr=learning_rate)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5)
 loss_fn = nn.CrossEntropyLoss()
 
 # run training loop and occasionally print losses:
@@ -49,6 +50,7 @@ try:
             print("Total loss on this iteration: {}".format(scalar_loss))
             print("Average loss per sample on this iteration: {}".format(scalar_loss / target_seq.size(1)))
             if best_observed_loss > scalar_loss: best_observed_loss = scalar_loss
+            scheduler.step(loss)
 except KeyboardInterrupt:
     print("....Training interrupted.")
 finally:
