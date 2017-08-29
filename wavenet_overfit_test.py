@@ -14,8 +14,8 @@ num_iterations = 100000
 # load signal from data and create dataset:
 signal = torch.load("./data/overfit/one_hot_signal.pth")
 _, dense_signal = torch.max(signal[:,:,1:], dim=1)
-source_seq = signal[:,:,0:200]
-target_seq = dense_signal[:,0:200]
+source_seq = signal
+target_seq = dense_signal
 if torch.cuda.is_available():
     source_seq = source_seq.cuda()
     target_seq = target_seq.cuda()
