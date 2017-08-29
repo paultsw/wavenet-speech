@@ -4,6 +4,7 @@ Overfit the core wavenet model on a single signal tensor.
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.autograd import Variable
 
 from modules.wavenet import WaveNet
@@ -13,23 +14,24 @@ num_iterations = 100000
 # load signal from data and create dataset:
 signal = torch.load("./data/overfit/one_hot_signal.pth")
 _, dense_signal = torch.max(signal[:,:,1:], dim=1)
-source_seq = signal
-target_seq = dense_signal
+source_seq = signal[:,:,0:200]
+target_seq = dense_signal[:,0:200]
 if torch.cuda.is_available():
     source_seq = source_seq.cuda()
     target_seq = target_seq.cuda()
 
 # construct model and optimizer:
+# (set softmax=False because CE loss already does softmax for you)
 dilations = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
-wavenet = WaveNet(256, 2, [(256, 256, 2, d) for d in dilations], 256, softmax=True)
+wavenet = WaveNet(256, 2, [(256, 256, 2, d) for d in dilations], 256, softmax=False)
 if torch.cuda.is_available(): wavenet.cuda()
-learning_rate = 0.001
+learning_rate = 1.0
+rho = 0.9
 wd = 0.0001
-betas = (0.9, 0.999)
-optimizer = optim.RMSprop(wavenet.parameters(), lr=learning_rate)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5)
+optimizer = optim.Adadelta(wavenet.parameters(), lr=learning_rate, rho=rho, weight_decay=wd)
+scheduler = ReduceLROnPlateau(optimizer, patience=5)
 loss_fn = nn.CrossEntropyLoss()
 
 # run training loop and occasionally print losses:
@@ -46,11 +48,10 @@ try:
         optimizer.step()
         if (step % print_every == 0):
             scalar_loss = loss.data[0]
-            print("Step: {}".format(step))
-            print("Total loss on this iteration: {}".format(scalar_loss))
-            print("Average loss per sample on this iteration: {}".format(scalar_loss / target_seq.size(1)))
+            print("Step: {0} | Total Loss: {1} | Average Per-Sample Loss: {2}".format(
+                step, scalar_loss, scalar_loss / target_seq.size(1)))
             if best_observed_loss > scalar_loss: best_observed_loss = scalar_loss
-            scheduler.step(loss)
+            scheduler.step(scalar_loss)
 except KeyboardInterrupt:
     print("....Training interrupted.")
 finally:

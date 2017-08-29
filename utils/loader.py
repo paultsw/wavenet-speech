@@ -65,7 +65,13 @@ class Loader(object):
         * bucket_id: choice of the bucket to fetch from.
         * data_nums: list of sequence IDs (possibly in np.array([int]) format).
         """
-        pass # [TODO: FIX THIS]
+        signal_batch = self.pad_and_onehot_signal(
+            [self._dataset['bucket_{}'.format(bucket_id)]['signals']['{}'.format(d)][:] for d in data_nums],
+            [self._buckets_data[bucket_id]['signal_lengths'][d] for d in data_nums])
+        sequence_batch = self.pad_sequence(
+            [self._dataset['bucket_{}'.format(bucket_id)]['reads']['{}'.format(d)][:] for d in data_nums],
+            [self._buckets_data[bucket_id]['read_lengths'][d] for d in data_nums])
+        return (signal_batch, sequence_batch)
 
 
     def fetch_one(self, bucket_id, data_num):
@@ -74,7 +80,7 @@ class Loader(object):
         """
         return (self._dataset['bucket_{}'.format(bucket_id)]['signals']['{}'.format(data_num)][:],
                 self._dataset['bucket_{}'.format(bucket_id)]['reads']['{}'.format(data_num)][:])
-        
+
     ### Static Helper Functions:
     @staticmethod
     def random_bucket(num_buckets):
@@ -85,6 +91,27 @@ class Loader(object):
     def random_sequences(num_sequences, batch_size):
         """Choose a batch at random. Randomly chooses an integer list of length `batch_size` from [0,num_sequences)."""
         return np.random.choice(num_sequences, size=batch_size, replace=False)
+
+    @staticmethod
+    def pad_and_onehot_signal(signals_batch, signal_lengths):
+        """
+        Pad and one-hot-encode a list of signals.
+        
+        Args:
+        * signals_batch: a list of ndarrays; these are the signals themselves.
+        * signal_lengths: a list of integers of same length as the list `signals_batch`; these are the lengths
+          of the signals.
+
+        Returns:
+        A batch of one-hot-encoded signals padded to the length of the maximum value.
+        """
+        pass # [TODO: figure this out]
+    
+    @staticmethod
+    def pad_sequence(sequence_batch, read_lengths):
+        """Pad a list of signals."""
+        pass # [TODO: figure this out]
+
 
     ### Helper Methods:
     def _load_metadata(self):
