@@ -164,7 +164,8 @@ class QueueLoader(object):
         self.queue = mp.Queue(queue_size)
         self.workers = []
         for k in range(num_workers):
-            pass # [TODO: spawn worker processes here]
+            # [TODO: spawn worker processes here; check that this is the correct syntax]
+            self.workers.append(mp.Process(target=self.queue_worker_fn, args=(self.queue,self.dataset)))
 
 
     def dequeue(self):
@@ -181,11 +182,12 @@ class QueueLoader(object):
         """
         Close the queue and end the processes gracefully.
         """
-        # first empty the queue:
-        pass # [TODO]
+        # first close the queue:
+        self.queue.close()
 
         # kill the processes:
-        pass # [TODO]
+        for worker in self.workers:
+            worker.close() # [CHECK THIS]
 
         # finally close HDF5 dataset file:
         self.dataset.close()
@@ -200,7 +202,8 @@ class QueueLoader(object):
 
 
     ### Helper Functions:
-    def queue_worker(self):
+    @staticmethod
+    def queue_worker_fn(queue, dataset):
         """
         Read a random (signal, sequence) pair from the database, apply a one-hot encoding to the
         signal, and append the (signal, sequence) pair to the queue.
