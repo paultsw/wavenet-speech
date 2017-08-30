@@ -142,6 +142,8 @@ class QueueLoader(object):
 
     TODO:
     * figure out how to run N worker processes in the background and kill after calls to close()
+    * figure out if torch.multiprocessing.Event() is necessary to synchronize the processes. See:
+      https://discuss.pytorch.org/t/tensors-as-items-in-multiprocessing-queue/411
     """
     def __init__(self, dataset_path, num_signal_levels=256, num_workers=1, queue_size=50):
         """
