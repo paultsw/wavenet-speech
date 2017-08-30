@@ -138,19 +138,33 @@ class QueueLoader(object):
     
     Upon dequeuing, a (signal, sequence) pair is either returned as-is (for CPU processing)
     or is dispatched to CUDA via `*.cuda()` during the dequeue operation.
+
+
+    TODO:
+    * figure out how to run N worker processes in the background and kill after calls to close()
     """
-    def __init__(self, dataset_path, num_workers=1):
+    def __init__(self, dataset_path, num_signal_levels=256, num_workers=1, queue_size=50):
         """
         Construct a QueueLoader.
         """
         # save settings:
         self.dataset_path = dataset_path
+        self.num_signal_levels = num_signal_levels
         self.num_workers = num_workers
+        self.queue_size = queue_size
         self.cuda = False
 
-        # construct queue:
-        self.queue = mp.Queue(None) # [finish settings]
-        # (... tbd ...)
+        # open HDF5 file:
+        try:
+            self.dataset = h5py.File(dataset_path, 'r')
+        except e:
+            raise Exception("Could not open HDF5 file: {}".format(e))
+
+        # construct queue and initialize workers:
+        self.queue = mp.Queue(queue_size)
+        self.workers = []
+        for k in range(num_workers):
+            pass # [TODO: spawn worker processes here]
 
 
     def dequeue(self):
@@ -162,6 +176,20 @@ class QueueLoader(object):
                               torch.autograd.Variable(sequence.cuda()))
         return (torch.autograd.Variable(signal), torch.autograd.Variable(sequence))
 
+    
+    def close(self):
+        """
+        Close the queue and end the processes gracefully.
+        """
+        # first empty the queue:
+        pass # [TODO]
+
+        # kill the processes:
+        pass # [TODO]
+
+        # finally close HDF5 dataset file:
+        self.dataset.close()
+
 
     def cuda(self):
         self.cuda = True
@@ -171,7 +199,17 @@ class QueueLoader(object):
         self.cuda = False
 
 
-    ### Static Helper Functions:
+    ### Helper Functions:
+    def queue_worker(self):
+        """
+        Read a random (signal, sequence) pair from the database, apply a one-hot encoding to the
+        signal, and append the (signal, sequence) pair to the queue.
+        """
+        pass
+        # TODO: define worker process that performs the above, with additional checks to
+        # ensure that the queue is open, not full, etc.
+
+
     @staticmethod
     def one_hot_signal(signal, num_levels):
         """
