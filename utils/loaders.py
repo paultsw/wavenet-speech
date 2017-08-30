@@ -167,12 +167,15 @@ class QueueLoader(object):
             # [TODO: spawn worker processes here; check that this is the correct syntax]
             self.workers.append(mp.Process(target=self.queue_worker_fn, args=(self.queue,self.dataset)))
 
+        # start all workers:
+        for worker in self.workers: worker.start()
+
 
     def dequeue(self):
         """
         Dequeue a new (signal, sequence) pair from the queue as a Variable.
         """
-        signal, sequence = self.queue.dequeue() # [check this dequeue() call]
+        signal, sequence = self.queue.get()
         if self.cuda: return (torch.autograd.Variable(signal.cuda()),
                               torch.autograd.Variable(sequence.cuda()))
         return (torch.autograd.Variable(signal), torch.autograd.Variable(sequence))
@@ -186,8 +189,7 @@ class QueueLoader(object):
         self.queue.close()
 
         # kill the processes:
-        for worker in self.workers:
-            worker.close() # [CHECK THIS]
+        for worker in self.workers: worker.join()
 
         # finally close HDF5 dataset file:
         self.dataset.close()
@@ -205,12 +207,17 @@ class QueueLoader(object):
     @staticmethod
     def queue_worker_fn(queue, dataset):
         """
-        Read a random (signal, sequence) pair from the database, apply a one-hot encoding to the
-        signal, and append the (signal, sequence) pair to the queue.
+        Read a random (signal, sequence) pair from the database, convert to LongTensor, apply a
+        one-hot encoding to the signal, and append the (signal, sequence) pair to the queue.
         """
-        pass
         # TODO: define worker process that performs the above, with additional checks to
         # ensure that the queue is open, not full, etc.
+        if queue.full(): pass
+
+        signal = None # [TODO: fetch from a random bucket in `dataset`]
+        sequence = None # [TODO: fetch from  `dataset`]
+        one_hot_signal = self.one_hot_signal(signal, self.num_signal_levels)
+        queue.put( (one_hot_signal, sequence) )
 
 
     @staticmethod
