@@ -10,7 +10,7 @@ from warpctc_pytorch import CTCLoss
 # custom modules:
 from modules.wavenet import WaveNet
 from modules.classifier import WaveNetClassifier
-from utils.loader import OverfitLoader # [TODO: swap this with Loader class once completed]
+from utils.loaders import Loader, QueueLoader
 from utils.logging import Logger
 from utils.config_tools import json_to_config, config_to_json
 
@@ -98,15 +98,15 @@ def train(config):
     train_dataset_path = config['training']['training_data']
     validation_dataset_path = config['training']['validation_data']
     save_dir = config['training']['save_dir']
-    # [TODO: swap this with a real loader once completed]
-    dataset = OverfitLoader("./data/overfit/signal.npy", "./data/overfit/read.npy")
+    num_epochs = config['training']['num_epochs']
+    max_iters = config['training']['max_iters']
+    train_dataset = Loader(train_dataset_path, max_iters=max_iters, num_epochs=num_epochs)
+    validation_dataset = Loader(validation_dataset_path, max_iters=max_iters, num_epochs=num_epochs)
     logger = Logger(save_dir)
 
     ###===== run training loop:
     print_every = config['training']['print_every']
     save_every = config['training']['save_every']
-    num_epochs = config['training']['num_epochs']
-    max_iters = config['training']['max_iters']
     timestep = 0
     try:
         for signal, sequence in dataset:
