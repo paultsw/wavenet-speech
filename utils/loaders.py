@@ -28,11 +28,11 @@ class Loader(object):
         self.counter = 0
         self.epochs = 0
         self.num_signal_levels = num_signal_levels
-        self.cuda = False
+        self._cuda = False
 
 
     def cuda(self):
-        self.cuda = True
+        self._cuda = True
 
 
     def close(self):
@@ -71,7 +71,7 @@ class Loader(object):
         self._tick()
 
         ### return CUDA or CPU:
-        if not self.cuda: return (torch.autograd.Variable(signal), torch.autograd.Variable(seq))
+        if not self._cuda: return (torch.autograd.Variable(signal), torch.autograd.Variable(seq))
         return (torch.autograd.Variable(signal.cuda()), torch.autograd.Variable(seq.cuda()))
 
 
@@ -154,7 +154,7 @@ class QueueLoader(object):
         self.num_signal_levels = num_signal_levels
         self.num_workers = num_workers
         self.queue_size = queue_size
-        self.cuda = False
+        self._cuda = False
 
         # open HDF5 file:
         try:
@@ -178,7 +178,7 @@ class QueueLoader(object):
         Dequeue a new (signal, sequence) pair from the queue as a Variable.
         """
         signal, sequence = self.queue.get()
-        if self.cuda: return (torch.autograd.Variable(signal.cuda()),
+        if self._cuda: return (torch.autograd.Variable(signal.cuda()),
                               torch.autograd.Variable(sequence.cuda()))
         return (torch.autograd.Variable(signal), torch.autograd.Variable(sequence))
 
@@ -198,11 +198,11 @@ class QueueLoader(object):
 
 
     def cuda(self):
-        self.cuda = True
+        self._cuda = True
 
 
     def cpu(self):
-        self.cuda = False
+        self._cuda = False
 
 
     ### Helper Functions:
