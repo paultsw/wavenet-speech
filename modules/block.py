@@ -34,6 +34,7 @@ class ResidualBlock(nn.Module):
         self.out_channels = out_channels
         self.kernel_width = kernel_width
         self.dilation = dilation
+        self.causal = causal
         self.conditioning = not (conditioning == None)
 
         ### submodules:

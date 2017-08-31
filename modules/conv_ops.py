@@ -50,14 +50,14 @@ class NonCausalConv1d(nn.Module):
         """Create an auto-padded conv1d."""
         # run parent initialization:
         super(NonCausalConv1d, self).__init__()
-        
+
         # save arguments as attributes:
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_width = kernel_width
         self.dilation = dilation
-        # amount to pad/shift by; (... TBD ...)
-        self.padding = (kernel_width-1)*dilation
+        # amount to pad/shift by:
+        self.padding = autopad(kernel_width, dilation)
 
         # single conv1d as submodule:
         self.conv1d = nn.Conv1d(
@@ -68,9 +68,10 @@ class NonCausalConv1d(nn.Module):
 
     def forward(self, seq):
         """
-        Forward pass through the internal conv1d.
+        Forward pass through the internal conv1d; slice off the same dimension as the original
+        sequence length to preserve temporal resolution.
         """
-        return self.conv1d(seq)
+        return self.conv1d(seq)[:,:,0:seq.size(2)]
 
 
 # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
@@ -93,3 +94,18 @@ def reshape_out(seq, dims):
     This is useful as an inverse operation to reshape_in, to be applied after a nonlinearity that requires (N,C) inputs."""
     N, L = dims
     return seq.view(N, L, -1).permute(0,2,1).contiguous()
+
+
+def autopad(k,d):
+    """
+    Given dilation and kernel width, automatically calculate correct amount to pad on left+right
+    needed to preserve temporal dimensionality.
+
+    [N.B.: this fails for even kernel and odd dilation values, for unknown reason...]
+    """
+    total_padding = (k-1) * d
+    # if total padding is odd:
+    if (total_padding % 2 == 1):
+        return int((total_padding-1) / 2)+1, int((total_padding-1) / 2)
+    else:
+        return int(total_padding / 2), int(total_padding / 2)
