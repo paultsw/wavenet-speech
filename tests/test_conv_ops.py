@@ -4,7 +4,7 @@ Test CausalConv1d module.
 import torch
 from torch.autograd import Variable
 
-from modules.conv_ops import CausalConv1d, compute_new_length
+from modules.conv_ops import CausalConv1d, NonCausalConv1d, compute_new_length
 
 # param settings:
 in_channels = 3
@@ -20,7 +20,9 @@ in_seq = Variable(in_seq_)
 
 # run causal conv1d:
 conv = CausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation_rate)
+ncconv = CausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation_rate)
 out_seq = conv(in_seq)
+nc_out_seq = ncconv(in_seq)
 
 # compute expected length before the conv1d:
 padding = (kernel_width-1)*dilation_rate
@@ -36,7 +38,7 @@ assert (torch.Size([batch_size, out_channels, expected_length]) == out_seq.size(
 # run overfitting test on constant sequence:
 source_sequence = Variable(torch.ones(batch_size, in_channels, seq_length).mul_(2.))
 target_sequence = Variable(torch.ones(batch_size, out_channels, seq_length).mul_(3.))
-print("===== Attempting to overfit on constant sequences... =====")
+print("===== Attempting to overfit on constant sequences with causal convolution... =====")
 num_iterations = 1000
 print_every = 50
 loss_fn = torch.nn.MSELoss()
@@ -48,4 +50,18 @@ for step in range(num_iterations):
     if step % print_every == 0: print("Loss @ step {0}: {1}".format(step,loss.data[0]))
     loss.backward()
     optimizer.step()
+print("... Done. You should see a gradually decreasing loss.")
+
+print("===== Attempting to overfit on constant sequences with non-causal convolution... =====")
+num_iterations = 1000
+print_every = 50
+loss_fn = torch.nn.MSELoss()
+nc_optimizer = torch.optim.Adam(ncconv.parameters())
+for step in range(num_iterations):
+    nc_optimizer.zero_grad()
+    preds = ncconv(source_sequence)
+    loss = loss_fn(preds, target_sequence)
+    if step % print_every == 0: print("Loss @ step {0}: {1}".format(step,loss.data[0]))
+    loss.backward()
+    nc_optimizer.step()
 print("... Done. You should see a gradually decreasing loss.")

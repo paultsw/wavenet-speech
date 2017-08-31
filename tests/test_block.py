@@ -21,16 +21,26 @@ in_seq = Variable(torch.randn(batch_size, in_channels, sequence_length))
 residual_block = ResidualBlock(in_channels, out_channels, kernel_width, dilation)
 out_seq, skip_connection = residual_block(in_seq)
 
+noncausal_block = ResidualBlock(in_channels, out_channels, kernel_width, dilation, causal=False)
+nc_out_seq, nc_skip_connection = noncausal_block(in_seq)
+
 ### assertions and prints:
-print("===== Assert that dimensions are correct... =====")
+print("===== Assert that causal dimensions are correct... =====")
 print(out_seq.size())
 print(skip_connection.size())
 
 assert (torch.Size([batch_size, out_channels, sequence_length]) == out_seq.size())
 assert (torch.Size([batch_size, out_channels, sequence_length]) == skip_connection.size())
 
+print("===== Assert that non-causal dimensions are correct... =====")
+print(nc_out_seq.size())
+print(nc_skip_connection.size())
+
+assert (torch.Size([batch_size, out_channels, sequence_length]) == nc_out_seq.size())
+assert (torch.Size([batch_size, out_channels, sequence_length]) == nc_skip_connection.size())
+
 # run overfitting test on constant sequence:
-print("===== Attempting to overfit on constant sequences... =====")
+print("===== Attempting to overfit on constant sequences with causal block... =====")
 source_sequence = Variable(torch.ones(batch_size, in_channels, sequence_length).mul_(2.))
 target_sequence = Variable(torch.ones(batch_size, out_channels, sequence_length).mul_(3.))
 num_iterations = 1000
@@ -44,4 +54,20 @@ for step in range(num_iterations):
     if step % print_every == 0: print("Loss @ step {0}: {1}".format(step,loss.data[0]))
     loss.backward()
     optimizer.step()
+print("... Done. You should see a gradually decreasing loss. (If you don't, something went wrong.)")
+
+print("===== Attempting to overfit on constant sequences with non-causal block... =====")
+source_sequence = Variable(torch.ones(batch_size, in_channels, sequence_length).mul_(2.))
+target_sequence = Variable(torch.ones(batch_size, out_channels, sequence_length).mul_(3.))
+num_iterations = 1000
+print_every = 50
+loss_fn = torch.nn.MSELoss()
+nc_optimizer = torch.optim.Adam(noncausal_block.parameters())
+for step in range(num_iterations):
+    nc_optimizer.zero_grad()
+    outs, skips = noncausal_block(source_sequence)
+    loss = loss_fn(outs+skips, target_sequence)
+    if step % print_every == 0: print("Loss @ step {0}: {1}".format(step,loss.data[0]))
+    loss.backward()
+    nc_optimizer.step()
 print("... Done. You should see a gradually decreasing loss. (If you don't, something went wrong.)")

@@ -22,7 +22,8 @@ layers = [(seq_dim, seq_dim, kwidth, d) for d in dilations]
 input_seq = Variable(torch.randn(batch_size, seq_dim, seq_length))
 
 ### construct WaveNet:
-wavenet = WaveNet(seq_dim, kwidth, layers, seq_dim)
+# (turn softmax off because torch.nn.CrossEntropyLoss does it for us)
+wavenet = WaveNet(seq_dim, kwidth, layers, seq_dim, softmax=False)
 
 ### run wavenet on inputs:
 predictions = wavenet(input_seq)
@@ -38,11 +39,10 @@ source_sequence = torch.zeros(batch_size, seq_dim, seq_length).scatter_(1, targe
 source = Variable(source_sequence)
 target = Variable(target_sequence)
 print("===== Attempting to overfit on constant sequences... =====")
-num_iterations = 10000
+num_iterations = 1000
 print_every = 50
 loss_fn = torch.nn.CrossEntropyLoss()
-#optimizer = torch.optim.RMSprop(wavenet.parameters(), lr=0.001)
-optimizer = torch.optim.SGD(wavenet.parameters(), lr=0.001, momentum=0.9, nesterov=True)
+optimizer = torch.optim.RMSprop(wavenet.parameters())
 try:
     for step in range(num_iterations):
         optimizer.zero_grad()

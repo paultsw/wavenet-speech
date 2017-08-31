@@ -3,14 +3,15 @@ Tests for WaveNet-Speech convolutional transcription network.
 """
 import torch
 from torch.autograd import Variable
-
 from modules.classifier import WaveNetClassifier
+from warpctc_pytorch import CTCLoss
 
 ### constructor parameters:
 num_labels = 8
 batch_size = 3
 seq_dim = 256
 seq_length = 10000
+output_dim = 128
 dilations = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
              1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
@@ -21,7 +22,9 @@ downsample_rate = 3
 input_seq = Variable(torch.randn(batch_size, seq_dim, seq_length))
 
 ### construct wavenet classifier/transcriptor stack & run:
-classifier = WaveNetClassifier(seq_dim, num_labels, layers, pool_kernel_size=downsample_rate)
+# (this time we /DO/ have to softmax the outputs, unlike previously)
+classifier = WaveNetClassifier(seq_dim, num_labels, layers, output_dim,
+                               pool_kernel_size=downsample_rate, softmax=True)
 out_dist_seq = classifier(input_seq)
 
 ### print outputs, sizes, etc:
@@ -35,3 +38,27 @@ print(out_dist_seq.size())
 
 assert (batch_size == out_dist_seq.size(0))
 assert (num_labels == out_dist_seq.size(1))
+
+# overfit on single pair of sequences, batch size == 1:
+print("===== Attempting to overfit on a constant pair of sequences (with CTC loss)... =====")
+source_seq = Variable(torch.randn(1, seq_dim, seq_length))
+target_seq = Variable(torch.rand(int(seq_length / 4)).mul_(num_labels-1).int())
+loss_fn = CTCLoss()
+label_sizes = Variable(torch.IntTensor([target_seq.size(0)]))
+num_iterations = 1000
+print_every = 1
+optimizer = torch.optim.RMSprop(classifier.parameters())
+try:
+    for k in range(num_iterations):
+        optimizer.zero_grad()
+        ctc_pred = classifier(source_seq)
+        transcriptions = ctc_pred.permute(2,0,1).contiguous()
+        transcription_sizes = Variable(torch.IntTensor([ctc_pred.size(2)]))
+        loss = loss_fn(transcriptions, target_seq, transcription_sizes, label_sizes)
+        loss.backward()
+        optimizer.step()
+        if k % print_every == 0: print("Loss @ step {0}: {1}".format(k, loss.data[0]))
+except KeyboardInterrupt:
+    printed("...Halted training.")
+finally:
+    print("... Done. You should see a gradually decreasing loss. (If you don't, it means that something went wrong.)")

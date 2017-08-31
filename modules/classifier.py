@@ -44,13 +44,8 @@ class WaveNetClassifier(nn.Module):
         self.pool_padding = 0
         # input 1x1Conv layer:
         self.input_kernel_size = input_kernel_size
-        self.input_padding = _autopad(input_kernel_size, input_dilation)
         self.input_dilation = input_dilation
-        # convolutional stack:
-        self.layers = layers
-        # output layer
-        self.out_kernel_size = out_kernel_size
-        self.out_dilation = out_dilation
+        # softmax on/off:
         self.softmax = softmax
 
         ### submodules
@@ -60,7 +55,7 @@ class WaveNetClassifier(nn.Module):
         # input layer:
         self.input_block = ResidualBlock(in_dim, layers[0][0], input_kernel_size, input_dilation,
                                          causal=False)
-        self.input_skip_bottleneck = nn.Conv1d(layers[0][0], kernel_size=1, padding=0, dilation=1)
+        self.input_skip_bottleneck = nn.Conv1d(layers[0][0], out_dim, kernel_size=1, padding=0, dilation=1)
 
         # stack of residual convolutions and their bottlenecks for skip connections:
         convolutions = []
@@ -68,7 +63,7 @@ class WaveNetClassifier(nn.Module):
         for (c_in,c_out,k,d) in layers:
             convolutions.append( ResidualBlock(c_in, c_out, k, d, causal=False) )
             skip_conn_bottlenecks.append( nn.Conv1d(c_out, out_dim, kernel_size=1, padding=0, dilation=1) )
-        self.convolutions = nn.ModuleList(stack)
+        self.convolutions = nn.ModuleList(convolutions)
         self.bottlenecks = nn.ModuleList(skip_conn_bottlenecks)
 
         # (1x1 Conv + ReLU + 1x1 Conv) stack, going from output dimension to logits over labels:
@@ -82,11 +77,14 @@ class WaveNetClassifier(nn.Module):
         for p in self.input_block.parameters():
             if len(p.size()) > 1: nn_init.kaiming_uniform(p)
             if len(p.size()) == 1: p.data.zero_()
-        for p in self.convolution_stack.parameters():
+        for p in self.convolutions.parameters():
             if len(p.size()) > 1: nn_init.kaiming_uniform(p)
             if len(p.size()) == 1: p.data.zero_()
         for p in self.bottlenecks.parameters():
             if len(p.size()) == 2: nn_init.eye(p)
+            if len(p.size()) == 1: p.data.zero_()
+        for p in self.output_block.parameters():
+            if len(p.size()) > 1: nn_init.kaiming_uniform(p)
             if len(p.size()) == 1: p.data.zero_()
 
 
@@ -104,8 +102,8 @@ class WaveNetClassifier(nn.Module):
         out = self.mean_pool(seq)
         
         # pass thru the input layer block:
-        skips_sum = Variable(seq.data.new(seq.size(0), self.out_dim, signal.size(2)).fill_(0.))
-        out, skip = self.input_block(mean_pool_seq)
+        skips_sum = Variable(out.data.new(out.size(0), self.out_dim, out.size(2)).fill_(0.))
+        out, skip = self.input_block(out)
         skips_sum = skips_sum + self.input_skip_bottleneck(skip)
 
         # run through convolutional stack (& accumulate skip connections thru bottlenecks):
