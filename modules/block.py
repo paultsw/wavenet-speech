@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from modules.conv_ops import CausalConv1d, reshape_in, reshape_out
+from modules.conv_ops import CausalConv1d, NonCausalConv1d, reshape_in, reshape_out
 from collections import OrderedDict
 
 ### ===== ===== ===== ===== Skip-Connection residual block.
@@ -18,10 +18,12 @@ class ResidualBlock(nn.Module):
 
     Returns additive residual output and a skip connection.
     """
-    def __init__(self, in_channels, out_channels, kernel_width, dilation, conditioning=None):
+    def __init__(self, in_channels, out_channels, kernel_width, dilation,
+                 causal=True, conditioning=None):
         """
         Residual Block constructor.
-
+        
+        The 'causal' flag determines whether the internal convolutions are causal or standard.
         Will (eventually) allow for optional conditioning on a global input.
         """
         ### parent constructor:
@@ -35,11 +37,15 @@ class ResidualBlock(nn.Module):
         self.conditioning = not (conditioning == None)
 
         ### submodules:
-        self.conv_tanh = CausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
-        self.conv_sigmoid = CausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
-        self.gated_activation = GatedActivationUnit()
+        if causal:
+            self.conv_tanh = CausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
+            self.conv_sigmoid = CausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
+        else:
+            self.conv_tanh = NonCausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
+            self.conv_sigmoid = NonCausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
         self.conv1x1_residual = nn.Conv1d(out_channels, out_channels, kernel_size=1)
         self.conv1x1_skip = nn.Conv1d(out_channels, out_channels, kernel_size=1)
+        self.gated_activation = GatedActivationUnit()
         self.residual_proj = nn.Linear(in_channels, out_channels)
 
 

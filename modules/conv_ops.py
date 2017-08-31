@@ -42,6 +42,37 @@ class CausalConv1d(nn.Module):
         return conv1d_out[:,:,0:seq.size(2)]
 
 
+class NonCausalConv1d(nn.Module):
+    """
+    An automatically-padded Conv1d.
+    """
+    def __init__(self, in_channels, out_channels, kernel_width, dilation=1):
+        """Create an auto-padded conv1d."""
+        # run parent initialization:
+        super(NonCausalConv1d, self).__init__()
+        
+        # save arguments as attributes:
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_width = kernel_width
+        self.dilation = dilation
+        # amount to pad/shift by; (... TBD ...)
+        self.padding = (kernel_width-1)*dilation
+
+        # single conv1d as submodule:
+        self.conv1d = nn.Conv1d(
+            in_channels, out_channels, kernel_width, stride=1,
+            padding=self.padding,
+            dilation=dilation)
+
+
+    def forward(self, seq):
+        """
+        Forward pass through the internal conv1d.
+        """
+        return self.conv1d(seq)
+
+
 # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
 # Helper Functions
 # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
