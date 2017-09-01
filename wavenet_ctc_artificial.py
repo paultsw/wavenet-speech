@@ -12,15 +12,16 @@ from modules.wavenet import WaveNet
 from modules.classifier import WaveNetClassifier
 from utils.loaders import Loader
 
+import traceback
 
 ### Training parameters, etc.
 num_iterations = 100000
-num_core_epochs = 30
+num_core_epochs = 10
 num_ctc_epochs = 50
 wavenet_dils = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
                 1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
                 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
-classifier_layers = [(256, 256, 2, d) for d in [1, 2, 4, 8, 16, 32] ]
+classifier_layers = [(256, 256, 2, d) for d in [1, 2, 4] ]
 downsample_rate = 3
 num_labels = 5 # == |{A,G,C,T,-}|
 num_levels = 256
@@ -45,12 +46,14 @@ dataloader = Loader(dataset_path, num_signal_levels=num_levels, max_iters=num_it
 
 
 ### update to CUDA if available:
+# [TODO: FIGURE OUT WHY CLASSIFIER FAILS ON GPU]
+"""
 if torch.cuda.is_available():
     wavenet.cuda()
     classifier.cuda()
     dataloader.cuda()
     print("Placed WaveNet, Classifier Network, and DataLoader on CUDA.")
-
+"""
 
 ### construct loss functions:
 ctc_loss_fn = CTCLoss()
@@ -58,11 +61,12 @@ xe_loss_fn = nn.CrossEntropyLoss()
 
 
 ### construct optimizers:
-wavenet_lr = None
-ctc_lr = None
-# (... more settings here ...)
-wavenet_optimizer = optim.RMSprop(wavenet.parameters())
-ctc_optimizer = optim.Adadelta(classifier.parameters())
+wavenet_lr = 0.0001
+wavenet_wd = 0.0001
+ctc_lr = 0.001
+ctc_wd = 0.0001
+wavenet_optimizer = optim.Adam(wavenet.parameters())
+ctc_optimizer = optim.Adam(classifier.parameters())
 
 
 ### (pre-)training closures:
@@ -83,7 +87,7 @@ def train_ctc_network(sig, seq):
     wavenet_optimizer.zero_grad()
     ctc_optimizer.zero_grad()
     pred_sig = wavenet(sig)
-    transcription = classifier(pred_sig)
+    transcription = classifier(pred_sig.cpu()) # [FIX: figure out why doesnt work on CUDA]
     #-- cross entropy loss on wavenet output:
     _, dense_sig = torch.max(sig[:,:,1:], dim=1)
     xe_loss = 0.
@@ -91,9 +95,9 @@ def train_ctc_network(sig, seq):
         xe_loss = xe_loss + xe_loss_fn(pred_sig[:,:,t], dense_sig[:,t])
     #-- ctc loss on predicted transcriptions
     probs = transcription.permute(2,0,1).contiguous() # expects (sequence, batch, logits)
-    prob_lengths = torch.IntTensor([probs.size(0)])
+    prob_lengths = Variable(torch.IntTensor([probs.size(0)]))
     labels = seq[0].cpu().int() # expects flattened labels
-    label_lengths = torch.IntTensor([len(labels)])
+    label_lengths = Variable(torch.IntTensor([len(labels)]))
     ctc_loss = ctc_loss_fn(probs, labels, prob_lengths, label_lengths)
     #-- backprop:
     total_loss = xe_loss + ctc_loss
@@ -112,7 +116,9 @@ try:
                 print("WaveNet-Pretrain XE Loss @ step {0}: {1}".format(dataloader.counter, xe_loss_train))
         else:
             signal, sequence = dataloader.fetch(bucket=0)
-            train_ctc_network(signal, sequence)
+            total_loss_train = train_ctc_network(signal, sequence)
+            if dataloader.counter % print_every == 0:
+                print("WaveNet-Classifier XE+CTC Loss @ step {0}: {1}".format(dataloader.counter, total_loss_train))
 except StopIteration:
     # handle stopiteration from dataloader (finished all iterations)
     print("Completed all epochs/iterations.")
@@ -127,6 +133,7 @@ except Exception as e:
     # handle all other exceptions:
     print("Something went wrong; received the following error:")
     print(e)
+    traceback.print_exc()
 finally:
     # cleanup:
     print("Closing file handles...")

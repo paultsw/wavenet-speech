@@ -42,12 +42,18 @@ assert (num_labels == out_dist_seq.size(1))
 # overfit on single pair of sequences, batch size == 1:
 print("===== Attempting to overfit on a constant pair of sequences (with CTC loss)... =====")
 source_seq = Variable(torch.randn(1, seq_dim, seq_length))
-target_seq = Variable(torch.rand(int(seq_length / 4)).mul_(num_labels-1).int())
+print("* Source sequence:")
+print(source_seq)
+target_seq = Variable(torch.zeros(int(seq_length / 4)).fill_(num_labels-2).int())
+target_seq[0:50] = 1
+print("* Target sequence:")
+print(target_seq)
 loss_fn = CTCLoss()
 label_sizes = Variable(torch.IntTensor([target_seq.size(0)]))
 num_iterations = 1000
 print_every = 1
 optimizer = torch.optim.RMSprop(classifier.parameters())
+print("Training...")
 try:
     for k in range(num_iterations):
         optimizer.zero_grad()
@@ -59,6 +65,8 @@ try:
         optimizer.step()
         if k % print_every == 0: print("Loss @ step {0}: {1}".format(k, loss.data[0]))
 except KeyboardInterrupt:
-    printed("...Halted training.")
+    print("...Halted training.")
 finally:
     print("... Done. You should see a gradually decreasing loss. (If you don't, it means that something went wrong.)")
+    print("Final predicted values:")
+    print(ctc_pred.data)
