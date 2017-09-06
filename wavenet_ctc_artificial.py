@@ -16,7 +16,7 @@ import traceback
 
 ### Training parameters, etc.
 num_iterations = 100000
-num_core_epochs = 10
+num_core_epochs = 0
 num_ctc_epochs = 50
 wavenet_dils = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
                 1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
@@ -24,6 +24,7 @@ wavenet_dils = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512,
 classifier_layers = [(256, 256, 2, d) for d in [1, 2, 4] ]
 downsample_rate = 3
 num_labels = 5 # == |{A,G,C,T,-}|
+out_dim = 128
 num_levels = 256
 dataset_path = "./data/artificial.hdf5"
 wavenet_model_save_path = "./runs/artificial/wavenet_model.pth"
@@ -34,10 +35,10 @@ print_every = 10
 wavenet = WaveNet(num_levels, 2,
                   [(num_levels, num_levels, 2, d) for d in wavenet_dils],
                   num_levels, softmax=False)
-classifier = WaveNetClassifier(num_levels, num_labels, classifier_layers,
+classifier = WaveNetClassifier(num_levels, num_labels, classifier_layers, out_dim,
                                pool_kernel_size=downsample_rate,
                                input_kernel_size=2, input_dilation=1,
-                               out_kernel_size=2, out_dilation=1, softmax=False)
+                               softmax=False)
 
 
 ### construct data loader:
@@ -113,12 +114,16 @@ try:
             signal, _ = dataloader.fetch(bucket=0)
             xe_loss_train = pretrain_core_wavenet(signal)
             if dataloader.counter % print_every == 0:
-                print("WaveNet-Pretrain XE Loss @ step {0}: {1}".format(dataloader.counter, xe_loss_train))
+                loss_per_sample = xe_loss_train / int(signal.size(2))
+                print("Step: {0:5d} | Pretrain XE Loss Tot: {1:07.4f} | Per-Sample: {2:07.4f}".format(
+                    dataloader.counter, xe_loss_train, loss_per_sample))
         else:
             signal, sequence = dataloader.fetch(bucket=0)
             total_loss_train = train_ctc_network(signal, sequence)
             if dataloader.counter % print_every == 0:
-                print("WaveNet-Classifier XE+CTC Loss @ step {0}: {1}".format(dataloader.counter, total_loss_train))
+                loss_per_char = total_loss_train / int(sequence.size(1))
+                print("Step: {0:5d} | XE+CTC Loss Tot: {1:07.4f} | Per-Char: {2:07.4f}".format(
+                    dataloader.counter, total_loss_train, loss_per_char))
 except StopIteration:
     # handle stopiteration from dataloader (finished all iterations)
     print("Completed all epochs/iterations.")
