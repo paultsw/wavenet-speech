@@ -22,6 +22,7 @@ class Loader(object):
         """Open handle to HDF5 dataset file."""
         self.dataset_path = dataset_path
         self._dataset = h5py.File(dataset_path, 'r')
+        self._closed = False
         self.num_epochs = num_epochs
         self.max_iters = max_iters
         self._load_metadata()
@@ -38,6 +39,12 @@ class Loader(object):
     def close(self):
         """Close the dataset."""
         self._dataset.close()
+        self._closed = True
+
+
+    def is_closed(self):
+        """True if closed, False if opened."""
+        return self._closed
 
 
     def fetch(self, bucket=None, entry=None):
@@ -121,7 +128,6 @@ class Loader(object):
     def _maybe_stop(self):
         """Return True if we are done; return False otherwise"""
         if self.epochs == self.num_epochs or self.counter == self.max_iters:
-            self.close()
             raise StopIteration
 
 
@@ -130,15 +136,14 @@ class Loader(object):
 class QueueLoader(object):
     """
     The QueueLoader reads from an HDF5 file and uses multiple cpu-based worker processes
-    to continuously push new (signal,sequence) pairs onto the queue; the workers perform a
-    one-hot encoding prior to pushing them onto the queue.
+    to continuously push new (signal,sequence) batches onto the queue; the workers perform a
+    one-hot encoding to the signals and pad them prior to pushing them onto the queue.
 
     A torch.multiprocessing.Queue object is exposed, but the individual worker processess
     are not exposed.
     
-    Upon dequeuing, a (signal, sequence) pair is either returned as-is (for CPU processing)
+    Upon dequeuing, a (signal, sequence) batch is either returned as-is (for CPU processing)
     or is dispatched to CUDA via `*.cuda()` during the dequeue operation.
-
 
     TODO:
     * figure out how to run N worker processes in the background and kill after calls to close()
@@ -220,6 +225,24 @@ class QueueLoader(object):
         sequence = None # [TODO: fetch from  `dataset`]
         one_hot_signal = self.one_hot_signal(signal, self.num_signal_levels)
         queue.put( (one_hot_signal, sequence) )
+
+
+    @staticmethod
+    def batch_signals(signals):
+        """
+        Batch and pad a collection of signals.
+        """
+        # TODO: finish this; pad them to uniform lengths.
+        pass
+
+
+    @staticmethod
+    def flatten_reads(reads):
+        """
+        Flatten a collection of reads to a 1D IntTensor, appropriate for CTCLoss.
+        """
+        # TODO: need a collection of labels of type torch.IntTensor ~ (sum([len(read) for read in reads],).
+        pass
 
 
     @staticmethod

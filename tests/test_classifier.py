@@ -49,6 +49,14 @@ target_seq[0:50] = 1
 print("* Target sequence:")
 print(target_seq)
 loss_fn = CTCLoss()
+print("* Diagnostic test for CTCLoss module:")
+__probs = torch.FloatTensor([[[0.1, 0.6, 0.1, 0.1, 0.1], [0.1, 0.1, 0.6, 0.1, 0.1]]]).transpose(0, 1).contiguous()
+_probs = Variable(_probs, requires_grad=True)
+_labels = Variable(torch.IntTensor([1, 2]))
+_label_sizes = Variable(torch.IntTensor([2]))
+_sizes = Variable(torch.IntTensor([2]))
+ctc_loss_ex = loss_fn(_probs, _labels, _sizes, _label_sizes)
+print("CTC loss: {} (You should see a value of approximately 2.4628)".format(ctc_loss_ex.data[0]))
 label_sizes = Variable(torch.IntTensor([target_seq.size(0)]))
 num_iterations = 1000
 print_every = 1
