@@ -1,5 +1,9 @@
 data/bucketed_data.hdf5
 data/artificial.hdf5
+data/artificial.large.hdf5
+data/human.subsamples.hdf5
+data/ecoli
 modules/__pycache__/**
 utils/__pycache__/**
 runs/**
+.ipynb_checkpoints
