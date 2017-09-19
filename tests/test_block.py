@@ -75,7 +75,8 @@ print("... Done. You should see a gradually decreasing loss. (If you don't, some
 #___________________________________________________________________________________________________
 
 ##### Run CUDA tests if available:
-if not (torch.cuda.is_available()): return
+import sys
+if not (torch.cuda.is_available()): sys.exit()
 print("GPU with CUDA support detected. Running CUDA tests...")
 
 ### construct input sequence:
