@@ -24,13 +24,16 @@ num_core_epochs = 0
 num_ctc_epochs = 50
 epoch_size = 3000
 batch_size = 16
-wavenet_dils = [1] * 12
-classifier_dils = [1] * 12
+wavenet_dils = [1, 2, 3, 4,
+                1, 2, 3, 4,
+                1, 2, 3, 4]
+classifier_dils = [1, 2, 3, 4,
+                   1, 2, 3, 4,
+                   1, 2, 3, 4]
 downsample_rate = 1
 num_labels = 5 # == |{-,A,G,C,T}|
 out_dim = 256
 num_levels = 256
-dataset_path = "./data/artificial.large.hdf5"
 wavenet_model_save_path = "./runs/artificial/wavenet_model.5.pth"
 classifier_model_save_path = "./runs/artificial/classifier_model.5.pth"
 wavenet_model_restore_path = "./runs/artificial/wavenet_model.3.pth"
@@ -65,18 +68,17 @@ dataloader = PoreModelLoader(num_iterations, (num_core_epochs+num_ctc_epochs), e
                              lengths=(90,100), sample_noise=10.)
 
 
+### construct loss functions:
+ctc_loss_fn = CTCLoss()
+xe_loss_fn = nn.CrossEntropyLoss()
+
 ### update to CUDA if available:
 CUDA_FLAG = False
 if torch.cuda.is_available():
     wavenet.cuda()
     classifier.cuda()
     CUDA_FLAG = True
-    print("Placed WaveNet & CTC Network on CUDA.")
-
-
-### construct loss functions:
-ctc_loss_fn = CTCLoss()
-xe_loss_fn = nn.CrossEntropyLoss()
+    print("GPU with CUDA detected; placed all modules on on CUDA.")
 
 
 ### construct optimizers:
@@ -115,6 +117,7 @@ def train_ctc_network(sig, seq, seq_lengths):
     labels = seq.cpu().int() # expects flattened labels; label 0 is <BLANK>
     labels = labels + Variable(torch.ones(seq[0].size()).int())
     ctc_loss = ctc_loss_fn(probs, labels, prob_lengths, seq_lengths)
+    if CUDA_FLAG: ctc_loss = ctc_loss.cuda()
     #-- backprop - choose which loss to optimize: total sum, average sum, ctc
     total_loss = xe_loss + ctc_loss
     average_loss = (xe_loss / sig.size(2)) + (ctc_loss / transcription.size(2))
