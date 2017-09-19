@@ -38,12 +38,9 @@ class ResidualBlock(nn.Module):
         self.conditioning = not (conditioning == None)
 
         ### submodules:
-        if causal:
-            self.conv_tanh = CausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
-            self.conv_sigmoid = CausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
-        else:
-            self.conv_tanh = NonCausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
-            self.conv_sigmoid = NonCausalConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
+        AutoConv1d = CausalConv1d if causal else NonCausalConv1d
+        self.conv_tanh = AutoConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
+        self.conv_sigmoid = AutoConv1d(in_channels, out_channels, kernel_width, dilation=dilation)
         self.conv1x1_residual = nn.Conv1d(out_channels, out_channels, kernel_size=1)
         self.conv1x1_skip = nn.Conv1d(out_channels, out_channels, kernel_size=1)
         self.gated_activation = GatedActivationUnit()
