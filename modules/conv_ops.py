@@ -57,12 +57,12 @@ class NonCausalConv1d(nn.Module):
         self.kernel_width = kernel_width
         self.dilation = dilation
         # amount to pad/shift by:
-        self.padding_l, self.padding_r = autopad(kernel_width, dilation)
+        self.padding = autopad(kernel_width, dilation)
 
         # single conv1d as submodule:
         self.conv1d = nn.Conv1d(
             in_channels, out_channels, kernel_width, stride=1,
-            padding=(self.padding_l, self.padding_r),
+            padding=self.padding,
             dilation=dilation)
 
 
@@ -107,6 +107,6 @@ def autopad(k,d):
     total_padding = (k-1) * d
     # if total padding is odd:
     if (total_padding % 2 == 1):
-        return (int((total_padding-1) / 2)+1, int((total_padding-1) / 2))
+        return int((total_padding-1) / 2)+1#, int((total_padding-1) / 2)
     else:
-        return (int(total_padding / 2), int(total_padding / 2))
+        return int(total_padding / 2)#, int(total_padding / 2)
