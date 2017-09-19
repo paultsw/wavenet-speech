@@ -20,7 +20,7 @@ import traceback
 
 ### Training parameters, etc.
 num_iterations = 300000
-num_core_epochs = 5
+num_core_epochs = 0
 num_ctc_epochs = 50
 epoch_size = 3000
 batch_size = 16
@@ -66,14 +66,13 @@ dataloader = PoreModelLoader(num_iterations, (num_core_epochs+num_ctc_epochs), e
 
 
 ### update to CUDA if available:
-# [TODO: FIGURE OUT WHY CLASSIFIER FAILS ON GPU]
-"""
+CUDA_FLAG = False
 if torch.cuda.is_available():
     wavenet.cuda()
     classifier.cuda()
-    dataloader.cuda()
-    print("Placed WaveNet, Classifier Network, and DataLoader on CUDA.")
-"""
+    CUDA_FLAG = True
+    print("Placed WaveNet & CTC Network on CUDA.")
+
 
 ### construct loss functions:
 ctc_loss_fn = CTCLoss()
@@ -81,12 +80,10 @@ xe_loss_fn = nn.CrossEntropyLoss()
 
 
 ### construct optimizers:
-#joint_optimizer = optim.Adadelta([{'params': wavenet.parameters()},
-#                                  {'params': classifier.parameters()}],
-#                                 lr=0.01)
 joint_optimizer = optim.Adagrad([{'params': wavenet.parameters()},
                                  {'params': classifier.parameters()}],
                                 lr=0.000005)
+
 
 ### (pre-)training closures:
 def pretrain_core_wavenet(sig):
@@ -104,11 +101,9 @@ def pretrain_core_wavenet(sig):
 
 def train_ctc_network(sig, seq, seq_lengths):
     """Train the wavenet & ctc-classifier jointly against both losses."""
-    #wavenet_optimizer.zero_grad()
-    #ctc_optimizer.zero_grad()
     joint_optimizer.zero_grad()
     pred_sig = wavenet(sig)
-    transcription = classifier(pred_sig.cpu()) # [FIX: figure out why doesnt work on CUDA]
+    transcription = classifier(pred_sig)
     #-- cross entropy loss on wavenet output:
     _, dense_sig = torch.max(sig[:,:,1:], dim=1)
     xe_loss = 0.
@@ -116,7 +111,7 @@ def train_ctc_network(sig, seq, seq_lengths):
         xe_loss = xe_loss + xe_loss_fn(pred_sig[:,:,t], dense_sig[:,t])
     #-- ctc loss on predicted transcriptions
     probs = transcription.permute(2,0,1).contiguous() # expects (sequence, batch, logits)
-    prob_lengths = Variable(torch.IntTensor([probs.size(0)]))
+    prob_lengths = Variable(torch.IntTensor([probs.size(0)] * batch_size))
     labels = seq.cpu().int() # expects flattened labels; label 0 is <BLANK>
     labels = labels + Variable(torch.ones(seq[0].size()).int())
     ctc_loss = ctc_loss_fn(probs, labels, prob_lengths, seq_lengths)
@@ -129,8 +124,6 @@ def train_ctc_network(sig, seq, seq_lengths):
     #average_ctc_loss.backward()
     #ctc_loss.backward()
     #-- apply gradients and return loss values (for output logs in training loop):
-    #ctc_optimizer.step()
-    #wavenet_optimizer.step()
     joint_optimizer.step()
     return (total_loss.data[0], xe_loss.data[0], ctc_loss.data[0])
 
@@ -140,6 +133,7 @@ try:
     while True:
         if dataloader.epochs < num_core_epochs:
             signal, _, _ = dataloader.fetch()
+            if CUDA_FLAG: signal = signal.cuda()
             xe_loss_train = pretrain_core_wavenet(signal)
             if dataloader.counter % print_every == 0:
                 loss_per_sample = xe_loss_train / int(signal.size(2))
@@ -147,11 +141,12 @@ try:
                     dataloader.counter, xe_loss_train, loss_per_sample))
         else:
             signal, sequence, lengths = dataloader.fetch()
+            if CUDA_FLAG: signal = signal.cuda()
             l_total, l_xe, l_ctc = train_ctc_network(signal, sequence, lengths)
             if dataloader.counter % print_every == 0:
-                total_pc = l_total / int(sequence.size(1))
+                total_pc = l_total / int(sequence.size(0))
                 xe_pc = l_xe / int(signal.size(2))
-                ctc_pc = l_ctc / int(sequence.size(1))
+                ctc_pc = l_ctc / int(sequence.size(0))
                 print(("Step: {0:5d} | XE+CTC Loss Tot: {1:07.4f}={2:07.4f}+{3:07.4f} | " + \
                        "Per-Sample XE: {4:07.4f} | Per-Char CTC: {5:07.4f}").format(
                            dataloader.counter, l_total, l_xe, l_ctc, xe_pc, ctc_pc))
@@ -180,8 +175,6 @@ except Exception as e:
     traceback.print_exc()
 finally:
     # cleanup:
-    print("Closing file handles...")
-    dataloader.close()
     print("Saving models...")
     torch.save(wavenet.state_dict(), wavenet_model_save_path)
     torch.save(classifier.state_dict(), classifier_model_save_path)
