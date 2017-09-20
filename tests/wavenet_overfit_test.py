@@ -1,5 +1,9 @@
 """
 Overfit the core wavenet model on a single signal tensor.
+
+If you want to run this file, run it from the top-level directory, i.e. `wavenet-speech/`.
+
+The demonstration here is largely superseded by the IPython Notebook (see `wavenet-speech/ipynbs`).
 """
 import torch
 import torch.nn as nn
