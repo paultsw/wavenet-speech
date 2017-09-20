@@ -4,7 +4,8 @@ Data-loading class.
 import h5py
 import torch
 import torch.utils.data as data
-import torch.multiprocessing as mp
+import threading as thread
+import queue
 import numpy as np
 from random import randint
 
@@ -132,7 +133,6 @@ class Loader(object):
             raise StopIteration
 
 
-
 # ===== ===== Queue-based Multiprocessing HDF5 Loader class ===== =====
 from utils.worker_fns import ecoli_worker_fn, bucket_worker_fn
 class QueueLoader(object):
@@ -144,16 +144,12 @@ class QueueLoader(object):
     A torch.multiprocessing.Queue object is exposed, but the individual worker processess
     are not exposed.
     
-    Upon dequeuing, a (signal, sequence) batch is either returned as-is (for CPU processing)
-    or is dispatched to CUDA via `*.cuda()` during the dequeue operation.
-
-    TODO:
-    * figure out how to run N worker processes in the background and kill after calls to close()
-    * figure out if torch.multiprocessing.Event() is necessary to synchronize the processes. See:
-      https://discuss.pytorch.org/t/tensors-as-items-in-multiprocessing-queue/411
+    Upon dequeuing, a tuple of batched sequences is either returned as-is (for CPU processing)
+    or is dispatched to CUDA via `*.cuda()` during the dequeue operation; the tuple is
+    of the form ().
     """
     def __init__(self, dataset_path, num_signal_levels=256, num_workers=1, queue_size=50, batch_size=8, sample_lengths=(90,110),
-                 worker_fn='ecoli'):
+                 max_iters=100, worker_fn='ecoli'):
         """
         Construct a QueueLoader.
         """
@@ -164,62 +160,65 @@ class QueueLoader(object):
         self.queue_size = queue_size
         self.batch_size = batch_size
         self.sample_lengths = sample_lengths
+        self.max_iters = max_iters
         self._cuda = False
 
         # open HDF5 file:
         try:
             self.dataset = h5py.File(dataset_path, 'r')
-        except e:
+        except:
             raise Exception("Could not open HDF5 file: {}".format(e))
 
         # list of top-level read names:
         self.reads = list(self.dataset.keys())
 
-        # construct queue:
-        self.queue = mp.Queue(queue_size)
+        # construct queue, re-entrant lock, and data counter:
+        self.queue = queue.Queue(queue_size)
+        self.rlock = thread.RLock()
+        self.global_counter = 0
+        self.__KILLSIG__ = False
 
         # create worker function as a closure:
-        # [TODO: multiplex over different worker function types here]
         assert (worker_fn in ['ecoli', 'buckets'])
-        self.queue_worker_fn = lambda: ecoli_worker_fn(self.dataset, self.reads, self.queue,
-                                                       batch_size=batch_size,
-                                                       sample_lengths=sample_lengths)
+        if worker_fn == 'buckets': raise Exception("ERR: bucketed dataset is currently unsupported.")
+        def _queue_worker(q):
+            while (self.global_counter < self.max_iters) and not (self.__KILLSIG__):
+                self.rlock.acquire()
+                q.put( ecoli_worker_fn(self.dataset, self.reads, batch_size=batch_size, sample_lengths=sample_lengths) )
+                self.global_counter += 1
+                self.rlock.release()
+        self.queue_worker_fn = _queue_worker
 
         # create workers:
-        self.workers = [mp.Process(target=self.queue_worker_fn) for k in range(num_workers)]
-
-        # start all workers:
-        for worker in self.workers: worker.start()
-
+        self.workers = []
+        for k in range(num_workers):
+            _worker = thread.Thread(target=self.queue_worker_fn, args=(self.queue,))
+            _worker.start()
+            self.workers.append(_worker)
 
     def dequeue(self):
         """
-        Dequeue a new (signal, sequence) pair from the queue as a Variable.
+        Dequeue a new data sequence tuple from the queue as a list of Variables.
         """
-        signal, sequence = self.queue.get()
-        if self._cuda: return (torch.autograd.Variable(signal.cuda()),
-                              torch.autograd.Variable(sequence.cuda()))
-        return (torch.autograd.Variable(signal), torch.autograd.Variable(sequence))
-
+        vals = self.queue.get(timeout=1)
+        if self._cuda:
+            return [torch.autograd.Variable(val.cuda()) for val in vals]
+        else:
+            return [torch.autograd.Variable(val) for val in vals]
     
     def close(self):
         """
         Close the queue and end the processes gracefully.
         """
-        # first close the queue:
-        self.queue.close()
-
         # join the processes:
-        for worker in self.workers:
-            worker.join()
+        self.__KILLSIG__ = True
+        [worker.join(timeout=1) for worker in self.workers]
 
         # finally close HDF5 dataset file:
-        self.dataset.close()
-
+        if self.dataset: self.dataset.close()
 
     def cuda(self):
         self._cuda = True
-
 
     def cpu(self):
         self._cuda = False
