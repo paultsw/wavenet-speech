@@ -1,7 +1,7 @@
 """
 Helper functions for training.
 """
-import torch
+#import torch
 
 
 def calculate_receptive_field(dilations, kernel_width):
@@ -21,3 +21,11 @@ def calculate_receptive_field(dilations, kernel_width):
     else:
         calculate_receptive_field(dilations[1:], kernel_width)
         # [TODO: figure out recursive relationship here]
+
+
+def compute_receptive_field(dilation_depth, nb_stacks):
+    """
+    This function is modified/borrowed from:
+    https://github.com/basveeling/wavenet/blob/master/wavenet.py#L280
+    """
+    return nb_stacks * (2 ** dilation_depth * 2) - (nb_stacks - 1)

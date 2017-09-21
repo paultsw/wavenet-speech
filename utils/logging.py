@@ -44,16 +44,16 @@ class Logger(object):
         Log a loss message to the logfile.
         """
         self._training_log_f.write(
-            "{0} @ step: {1} | Training: {2:.4f} | Validation {3:.4f}".format(loss, step, train, valid))
+            "{0} @ step: {1} | Training: {2:.4f} | Validation {3:.4f} \n".format(loss, step, train, valid))
         self._training_log_f.flush()
 
 
-    def save(self, timestep, model_core, model_class):
+    def save(self, timestep, model_core, model_ctc):
         """Save model to run directory."""
         _core_model_path = os.path.join(self.ckpt_dir, "wavenet_core.t{}.pt".format(timestep))
-        _class_model_path = os.path.join(self.ckpt_dir, "wavenet_class.t{}.pt".format(timestep))
-        torch.save(model.state_dict(), _core_model_path)
-        torch.save(model.state_dict(), _class_model_path)
+        _ctc_model_path = os.path.join(self.ckpt_dir, "wavenet_ctc.t{}.pt".format(timestep))
+        torch.save(model_core.state_dict(), _core_model_path)
+        torch.save(model_ctc.state_dict(), _ctc_model_path)
         self._messages_log_f.write(
-            "[{0}] Saved wavenet base model to: {1}, {2}\n".format(timestep, _core_model_path, _class_model_path))
+            "[{0}] Saved wavenet base models to: {1}, {2}\n".format(timestep, _core_model_path, _ctc_model_path))
         self._messages_log_f.flush()

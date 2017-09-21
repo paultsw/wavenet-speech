@@ -8,3 +8,4 @@ utils/__pycache__/**
 runs/**
 .ipynb_checkpoints
 ipynbs/*.pth
+__pycache__

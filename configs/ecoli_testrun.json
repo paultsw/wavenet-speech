@@ -1,0 +1,55 @@
+{
+    "model": {
+	"base": {
+	    "signal_dim": 256,
+	    "entry_kwidth": 2,
+	    "kernel": 2,
+	    "dilations": [1,2,4,8,16,
+			  1,2,4,8,16,
+			  1,2,4,8,16]
+	},
+	"classifier": {
+	    "num_labels": 5,
+	    "kernel": 2,
+	    "dilations": [1,2,4,8,16,
+			  1,2,4,8,16,
+			  1,2,4,8,16],
+	    "downsample": 3,
+	    "out_dim": 256
+	}
+    },
+    "training": {
+	"batch_size": 8,
+	"num_epochs" : 40,
+	"max_iters" : 300000,
+	"nworkers": 5,
+	"min_sample_length": 90,
+	"max_sample_length": 110,
+	"print_every" : 25,
+	"save_every" : 5000,
+	"print_samples" : true,
+	"training_data": "./data/ecoli/reads.01.reference.hdf5",
+	"validation_data": null,
+	"save_dir" : "./runs/ecoli/test_run/",
+	"restore_wavenet_path" : null,
+	"restore_classifier_path": null,
+	"optim": {
+	    "type": "adam",
+	    "learning_rate": 0.000005,
+	    "wd": 0.0,
+	    "max_grad_norm": null,
+	    "base": {
+		"type": "adam",
+		"learning_rate": 0.000005,
+		"wd": 0.0,
+		"max_grad_norm": 1.0
+	    },
+	    "classifier": {
+		"type": "adam",
+		"learning_rate": 0.01,
+		"wd": 0.0001,
+		"max_grad_norm": 1.0
+	    }
+	}
+    }
+}
