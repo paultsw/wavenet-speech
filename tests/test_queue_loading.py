@@ -8,8 +8,8 @@ import traceback
 import sys
 
 ### construct queue loader on E.Coli dataset:
-dataset_path = "ecoli/reads.01.reference.hdf5"
-loader = QueueLoader(dataset_path, num_workers=5, max_iters=100)
+dataset_path = "data/ecoli/reads.01.reference.hdf5"
+loader = QueueLoader(dataset_path, num_workers=5, max_iters=100, epoch_size=10)
 
 ### test settings:
 num_prints = 300
@@ -22,6 +22,10 @@ try:
     print("Done")
     loader.close()
 ### handle errors and close queue:
+except StopIteration:
+    print("All iterations finished; StopIteration called.")
+    print("Num iterations: {}".format(loader.global_counter))
+    print("Num epochs: {}".format(loader.num_epochs))
 except:
     traceback.print_exc()
 finally:

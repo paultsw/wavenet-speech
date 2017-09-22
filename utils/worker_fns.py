@@ -32,7 +32,7 @@ def ecoli_worker_fn(hdf5_handle, keys, batch_size=8, sample_lengths=(90,110), nu
     base_lengths_list = []
     for start_ix, stop_ix in subintervals:
         move_to_start = positions[start_ix] - positions[0]
-        move_to_stop = positions[stop_ix] - positions[0]
+        move_to_stop = (positions[stop_ix] - positions[0]) + 4 # +4 for 5mer-adjustment
         ref_subseq = references[move_to_start:move_to_stop]
         base_seqs.append(ref_subseq)
         base_lengths_list.append(ref_subseq.shape[0])
@@ -59,6 +59,7 @@ def ecoli_worker_fn(hdf5_handle, keys, batch_size=8, sample_lengths=(90,110), nu
     seqs_th = torch.from_numpy(flattened_seqs)
     signal_lengths_th = torch.from_numpy(signal_lengths)
     base_lengths_th = torch.from_numpy(base_lengths)
+    #return (read, subintervals, base_lengths) # [debug mode]
     return (signals_th, seqs_th, signal_lengths_th, base_lengths_th)
 
 

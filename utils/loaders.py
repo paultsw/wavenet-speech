@@ -1,5 +1,5 @@
 """
-Data-loading class.
+Data-loading classes.
 """
 import h5py
 import torch
@@ -7,10 +7,129 @@ import torch.utils.data as data
 import threading as thread
 import queue
 import numpy as np
-from random import randint
+from random import randint, shuffle
+
+# ===== ===== Queue-based Multiprocessing HDF5 Loader class ===== =====
+from utils.worker_fns import ecoli_worker_fn, bucket_worker_fn
+class QueueLoader(object):
+    """
+    The QueueLoader reads from an HDF5 file and uses multiple cpu-based worker processes
+    to continuously push new (signal,sequence) batches onto the queue; the workers perform
+    (sampling => one-hot encoding => padding) prior to pushing them onto the queue.
+
+    A Queue object is exposed, but the individual worker threads are not exposed.
+    
+    Upon dequeuing, a tuple of batched sequences is either returned as-is (for CPU processing)
+    or is dispatched to CUDA via `*.cuda()` during the dequeue operation; the tuple is
+    of the form ().
+    """
+    def __init__(self, dataset_path, num_signal_levels=256, num_workers=1, queue_size=50, batch_size=8, sample_lengths=(90,110),
+                 max_iters=100, epoch_size=1000, worker_fn='ecoli'):
+        """
+        Construct a QueueLoader.
+        """
+        # save settings:
+        self.dataset_path = dataset_path
+        self.num_signal_levels = num_signal_levels
+        self.num_workers = num_workers
+        self.queue_size = queue_size
+        self.batch_size = batch_size
+        self.sample_lengths = sample_lengths
+        self.max_iters = max_iters
+        self.epoch_size = epoch_size
+        self.num_epochs = 0
+        self._cuda = False
+
+        # open HDF5 file:
+        try:
+            self.dataset = h5py.File(dataset_path, 'r')
+        except:
+            raise Exception("Could not open HDF5 file: {}".format(dataset_path))
+
+        # list of top-level read names into train/validation set:
+        self.reads = list(self.dataset.keys())
+        valid_set_size = int(0.3 * len(self.reads)) # 30% of reads go to validation
+        self.train_reads = self.reads[valid_set_size:]
+        self.valid_reads = self.reads[0:valid_set_size]
+
+        # construct queue, re-entrant lock, and data counter:
+        self.train_queue = queue.Queue(queue_size)
+        self.valid_queue = queue.Queue(queue_size)
+        self.queue_lock = thread.Lock()
+        self.global_counter = 0
+        self.stop_event = thread.Event()
+
+        # create worker function as a closure:
+        assert (worker_fn in ['ecoli', 'buckets'])
+        if worker_fn == 'buckets': raise Exception("ERR: bucketed dataset is currently unsupported.")
+        def queue_worker(q, reads, stop_evt):
+            while True:
+                if stop_evt.is_set(): break
+                if (self.global_counter > self.max_iters): break
+                datavals = ecoli_worker_fn(self.dataset, reads, batch_size=batch_size, sample_lengths=sample_lengths)
+                with self.queue_lock:
+                    q.put( datavals )
+                    self.incr_global_ctr()
+        self.queue_worker = queue_worker
+
+        # create workers:
+        self.workers = []
+        for k in range(num_workers):
+            _train_worker = thread.Thread(target=self.queue_worker,
+                                          args=(self.train_queue, self.train_reads, self.stop_event),
+                                          daemon=True)
+            _train_worker.start()
+            self.workers.append(_train_worker)
+        # only need one validation worker since we dequeue from it so rarely:
+        _valid_worker = thread.Thread(target=self.queue_worker,
+                                      args=(self.valid_queue, self.valid_reads, self.stop_event),
+                                      daemon=True)
+        _valid_worker.start()
+        self.workers.append(_valid_worker)
+
+    def incr_global_ctr(self):
+        self.global_counter += 1
+        if (self.global_counter % self.epoch_size == 0): self.num_epochs += 1
+
+    def dequeue(self, from_queue="train"):
+        """
+        Dequeue a new data sequence tuple from the queue as a list of Variables.
+        """
+        assert (from_queue in ['train', 'valid'])
+        if from_queue == "train":
+            try:
+                vals = self.train_queue.get(timeout=1)
+            except:
+                raise StopIteration
+        if from_queue == "valid":
+            try:
+                vals = self.valid_queue.get(timeout=1)
+            except:
+                raise StopIteration
+        if self._cuda:
+            return [torch.autograd.Variable(val.cuda()) for val in vals]
+        else:
+            return [torch.autograd.Variable(val) for val in vals]
+    
+    def close(self):
+        """
+        Gracefully join all threads and close HDF5 file handle.
+        """
+        # join the processes, with timeout of 2 seconds:
+        self.stop_event.set()
+        [worker.join(timeout=2) for worker in self.workers]
+
+        # finally close HDF5 dataset file:
+        if self.dataset: self.dataset.close()
+
+    def cuda(self):
+        self._cuda = True
+
+    def cpu(self):
+        self._cuda = False
 
 
-# ===== ===== HDF5 Loader class ===== =====
+# ===== ===== Basic HDF5 Loader class ===== =====
 class Loader(object):
     """
     Signal and base-sequence loader. Takes a list of datasets in the form of an HDF5 and swaps between them.
@@ -130,262 +249,4 @@ class Loader(object):
     def _maybe_stop(self):
         """Return True if we are done; return False otherwise"""
         if self.epochs == self.num_epochs or self.counter == self.max_iters:
-            raise StopIteration
-
-
-# ===== ===== Queue-based Multiprocessing HDF5 Loader class ===== =====
-from utils.worker_fns import ecoli_worker_fn, bucket_worker_fn
-class QueueLoader(object):
-    """
-    The QueueLoader reads from an HDF5 file and uses multiple cpu-based worker processes
-    to continuously push new (signal,sequence) batches onto the queue; the workers perform
-    (sampling => one-hot encoding => padding) prior to pushing them onto the queue.
-
-    A torch.multiprocessing.Queue object is exposed, but the individual worker processess
-    are not exposed.
-    
-    Upon dequeuing, a tuple of batched sequences is either returned as-is (for CPU processing)
-    or is dispatched to CUDA via `*.cuda()` during the dequeue operation; the tuple is
-    of the form ().
-    """
-    def __init__(self, dataset_path, num_signal_levels=256, num_workers=1, queue_size=50, batch_size=8, sample_lengths=(90,110),
-                 max_iters=100, worker_fn='ecoli'):
-        """
-        Construct a QueueLoader.
-        """
-        # save settings:
-        self.dataset_path = dataset_path
-        self.num_signal_levels = num_signal_levels
-        self.num_workers = num_workers
-        self.queue_size = queue_size
-        self.batch_size = batch_size
-        self.sample_lengths = sample_lengths
-        self.max_iters = max_iters
-        self._cuda = False
-
-        # open HDF5 file:
-        try:
-            self.dataset = h5py.File(dataset_path, 'r')
-        except:
-            raise Exception("Could not open HDF5 file: {}".format(e))
-
-        # list of top-level read names:
-        self.reads = list(self.dataset.keys())
-
-        # construct queue, re-entrant lock, and data counter:
-        self.queue = queue.Queue(queue_size)
-        self.rlock = thread.RLock()
-        self.global_counter = 0
-        self.__KILLSIG__ = False
-
-        # create worker function as a closure:
-        assert (worker_fn in ['ecoli', 'buckets'])
-        if worker_fn == 'buckets': raise Exception("ERR: bucketed dataset is currently unsupported.")
-        def _queue_worker(q):
-            while (self.global_counter < self.max_iters) and not (self.__KILLSIG__):
-                self.rlock.acquire()
-                q.put( ecoli_worker_fn(self.dataset, self.reads, batch_size=batch_size, sample_lengths=sample_lengths) )
-                self.global_counter += 1
-                self.rlock.release()
-        self.queue_worker_fn = _queue_worker
-
-        # create workers:
-        self.workers = []
-        for k in range(num_workers):
-            _worker = thread.Thread(target=self.queue_worker_fn, args=(self.queue,))
-            _worker.start()
-            self.workers.append(_worker)
-
-    def dequeue(self):
-        """
-        Dequeue a new data sequence tuple from the queue as a list of Variables.
-        """
-        vals = self.queue.get(timeout=1)
-        if self._cuda:
-            return [torch.autograd.Variable(val.cuda()) for val in vals]
-        else:
-            return [torch.autograd.Variable(val) for val in vals]
-    
-    def close(self):
-        """
-        Close the queue and end the processes gracefully.
-        """
-        # join the processes:
-        self.__KILLSIG__ = True
-        [worker.join(timeout=1) for worker in self.workers]
-
-        # finally close HDF5 dataset file:
-        if self.dataset: self.dataset.close()
-
-    def cuda(self):
-        self._cuda = True
-
-    def cpu(self):
-        self._cuda = False
-
-
-# ===== ===== Pore Generator Loader class ===== =====
-from scipy.ndimage.filters import generic_filter
-from scipy.signal import triang
-
-# default mapping from nucleotides to underlying pico-amp values:
-_CURRS_ = { 0: 51., 1: 22., 2: 103., 3: 115. }
-class PoreModelLoader(object):
-    """
-    An on-line random generator for artificial pore data.
-    """
-    def __init__(self, max_iters, num_epochs, epoch_size, batch_size=1, num_levels=256,
-                 lengths=(20,30), pore_width=4, sample_rate=3, currents_dict=_CURRS_, sample_noise=3.0):
-        """
-        Initialize the pore loader.
-        
-        Data/iterator settings:
-        * max_iters: maximum number of times that fetch() can be called before StopIteration is raised.
-        * num_epochs: maximum number of epochs (defined by `epoch_size`) that can be ran before StopIteration.
-        * epoch_size: number of examples per epoch.
-        * batch_size: number of data sequences per batch. [Default: 1]
-        * num_levels: number of discrete levels in the signal sequence.
-        
-        Model settings:
-        * lengths: a tuple indicating the minimum and maximum base sequence lengths to sample from.
-        * pore_width: indicates how many nucleotides can fit inside the pore at a given time.
-        * sample_rate: number of samples to emit per movement of the pore.
-        * currents_dict: a { nucleotide => pico-amps } lookup dict.
-        * sample_noise: python float, indicates the amount of white noise to add to the signal.
-        """
-        # save input params:
-        self.max_iters = max_iters
-        self.num_epochs = num_epochs
-        self.epoch_size = epoch_size
-        self.batch_size = batch_size
-        self.num_levels = num_levels
-        self.min_length = lengths[0]
-        self.max_length = lengths[1]
-        self.pore_width = pore_width
-        self.sample_rate = sample_rate
-        self.currents_dict = currents_dict
-        self.sample_noise = sample_noise
-
-        # internal record-keeping parameters:
-        self.counter = 0
-        self.epochs = 0
-        self.on_cuda = False
-
-        # define quantization law and levels:
-        _mu = float(num_levels)
-        _mu_law = lambda x: (np.sign(x) * (np.log(1+_mu*np.abs(x)) * np.reciprocal(np.log(1+_mu))))
-        self.quant_law = np.vectorize(_mu_law)
-        self.quant_levels = np.linspace(-1.0, 1.0, num=num_levels)
-
-
-    def pore_model_fn(self, sequence):
-        """
-        Converts a sequence of nucleotides into a sequence of pico-amps.
-        """
-        pico_amps = np.array([self.currents_dict[nucleo] for nucleo in sequence], dtype=np.float32)
-        triangular_window = triang(self.pore_width)
-        fn = lambda arr: np.dot(arr, triangular_window)
-        pA_sequence = generic_filter(pico_amps, fn, size=self.pore_width, mode='constant', cval=0.0)
-        noiseless = np.repeat(pA_sequence, self.sample_rate)
-        noise = np.random.normal(loc=0.0, scale=self.sample_noise, size=noiseless.shape)
-        return (noiseless + noise)
-
-
-    def quantize_fn(self, fseq):
-        """
-        Quantize a signal to some number of levels; first shift+scale the inputs to the right dimensions
-        before applying quant law.
-        """
-        normalized = (fseq - np.mean(fseq)) / (np.amax(fseq) - np.amin(fseq))
-        mapped = self.quant_law(normalized)
-        return np.digitize(mapped, self.quant_levels)
-
-
-    def one_hot_fn(self, dseq):
-        """
-        Perform one-hot encoding on a quantized sequence. Takes 1D np.int32 array as input, returns
-        a one-hot encoded np.float32 array with shape (num_levels, len(dseq),) as output.
-
-        [TBD]
-        """
-        seq_length = dseq.shape[0]
-        ohe_arr = np.zeros((self.num_levels, seq_length), dtype=np.float32)
-        ohe_arr[ dseq, np.arange(seq_length) ] = 1. # fancy indexing to do the trick
-        return ohe_arr
-
-
-    def convert_to_signal(self, seq):
-        picoamp_signal = self.pore_model_fn(seq)
-        quantized = self.quantize_fn(picoamp_signal)
-        one_hot_signal = self.one_hot_fn(quantized)
-        return one_hot_signal
-
-    @staticmethod
-    def batchify(signals_list):
-        """
-        Pad a list to uniform length with vectors consisting solely of zeros.
-        
-        Args:
-        * signals_list: a list of np.float32 arrays, each of shape (signal_length,).
-        Returns:
-        * signals_batch: np.float32 of shape ( len(signals_list), num_levels, max[signal_length] ).
-        """
-        # get max length:
-        pad_length = max([sig.shape[1] for sig in signals_list])
-        # pad all ndarrs and stack together in 0-axis:
-        padded_sigs = []
-        for sig in signals_list:
-            padded_sigs.append( np.pad(sig, ((0,0),(0,pad_length-sig.shape[1])), mode='constant') )
-        # stack and return:
-        return np.stack(padded_sigs, axis=0)
-
-
-    def fetch(self):
-        """
-        Generate and fetch a (signal, sequence, lengths) triple, where:
-        * signal: a FloatTensor variable of shape (batch_size, num_levels, signal_seq_length)
-        * sequence: an IntTensor variable of shape SUM{ len(seq1), len(seq2), ... }
-        made up of concatenated sequences. (This is the format expected by the CTC loss operation.)
-        * lengths: a 1D IntTensor variable of size (batch_size) giving the lengths of each
-        sequence in the batch.
-        """
-        ### stop if we hit max iterations:
-        self.maybe_stop()
-
-        ### sample a list of candidate lengths:
-        lengths = np.random.choice(range(self.min_length, self.max_length), size=self.batch_size)
-        lengths_th = torch.IntTensor(lengths.astype(np.int32))
-
-        ### sample a batch of random sequences:
-        seqs = [np.random.randint(0, high=4, size=k, dtype=np.int32) for k in lengths]
-        seq = torch.from_numpy(np.concatenate(seqs)).int()
-
-        ### for each sequence, sample a signal sequence and stack into a batch:
-        signals = [self.convert_to_signal(sq) for sq in seqs]
-        signal = torch.from_numpy(self.batchify(signals)).float()
-
-        ### update timestep
-        self.tick()
-
-        ### return on either CUDA or CPU:
-        outs = (torch.autograd.Variable(signal), torch.autograd.Variable(seq), torch.autograd.Variable(lengths_th))
-        if not self.on_cuda: return outs
-        return (outs[0].cuda(), outs[1].cuda(), outs[2].cuda())
-
-
-    # ----- Helper Functions -----
-    def cuda(self):
-        self.on_cuda = True
-
-    def cpu(self):
-        self.on_cuda = False
-
-    def tick(self):
-        """Update counter and maybe update epoch"""
-        self.counter += 1
-        if (self.counter != 0) and (self.counter % self.epoch_size == 0): self.epochs += 1
-
-    def maybe_stop(self):
-        """Return True if we are done; return False otherwise"""
-        if (self.epochs == self.num_epochs) or (self.counter == self.max_iters):
             raise StopIteration
