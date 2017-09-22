@@ -1,5 +1,5 @@
 """
-Helper functions for training.
+Helper functions that may be useful in deciding upon a model architecture.
 """
 def compute_receptive_field(dilation_depth, nb_stacks):
     """
