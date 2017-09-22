@@ -4,7 +4,7 @@ Speed-test benchmark for infinite-data pore-model generator.
 import torch
 import numpy as np
 import timeit
-from utils.loaders import PoreModelLoader
+from utils.pore_model import PoreModelLoader
 
 pore_model_generator = PoreModelLoader(100, 1, 100, batch_size=10)
 
