@@ -14,7 +14,7 @@ from torch.autograd import Variable
 from warpctc_pytorch import CTCLoss
 from modules.wavenet import WaveNet
 from modules.classifier import WaveNetClassifier
-from utils.loaders import PoreModelLoader
+from utils.pore_model import PoreModelLoader
 
 import traceback
 
@@ -23,33 +23,42 @@ num_iterations = 300000
 num_core_epochs = 0
 num_ctc_epochs = 50
 epoch_size = 3000
-batch_size = 16
+batch_size = 8
+wavenet_kwidth = 2
 wavenet_dils = [1, 2, 3, 4,
                 1, 2, 3, 4,
                 1, 2, 3, 4]
-classifier_dils = [1, 2, 3, 4,
-                   1, 2, 3, 4,
-                   1, 2, 3, 4]
+classifier_kwidth = 3
+classifier_dils = [1, 2, 4, 8, 16, 32,
+                   1, 2, 4, 8, 16, 32,
+                   1, 2, 4, 8, 16, 32]
 downsample_rate = 1
 num_labels = 5 # == |{-,A,G,C,T}|
 out_dim = 256
 num_levels = 256
-wavenet_model_save_path = "./runs/artificial/wavenet_model.5.pth"
-classifier_model_save_path = "./runs/artificial/classifier_model.5.pth"
+wavenet_model_save_path = "./runs/artificial/wavenet_model.interleaved.pm1.pth"
+classifier_model_save_path = "./runs/artificial/classifier_model.interleaved.pm1.pth"
 wavenet_model_restore_path = "./runs/artificial/wavenet_model.3.pth"
 classifier_model_restore_path = "./runs/artificial/classifier_model.3.pth"
 restore_wavenet = False #True # if true, restore a model
 restore_classifier = False #True # if true, restore a model
-print_every = 10
+print_every = 1
 num_early_stop_counts = 3
-early_stop_threshold = 0.8
+early_stop_threshold = 0.25
+
+# pore model parameters:
+interleave_blanks = False
+pore_sample_lengths = (90,100)
+pore_width = 1
+sample_rate = 10
+sample_noise = 2.
 
 ### construct wavenet and classifier models:
-wavenet = WaveNet(num_levels, 2,
-                  [(num_levels, num_levels, 2, d) for d in wavenet_dils],
+wavenet = WaveNet(num_levels, wavenet_kwidth,
+                  [(num_levels, num_levels, wavenet_kwidth, d) for d in wavenet_dils],
                   num_levels, softmax=False)
 classifier = WaveNetClassifier(num_levels, num_labels,
-                               [(num_levels, num_levels, 3, d) for d in classifier_dils],
+                               [(num_levels, num_levels, classifier_kwidth, d) for d in classifier_dils],
                                out_dim,
                                pool_kernel_size=downsample_rate,
                                input_kernel_size=2, input_dilation=1,
@@ -65,7 +74,8 @@ if restore_classifier:
 
 ### construct data loader:
 dataloader = PoreModelLoader(num_iterations, (num_core_epochs+num_ctc_epochs), epoch_size, batch_size,
-                             lengths=(90,100), sample_noise=10.)
+                             lengths=pore_sample_lengths, pore_width=pore_width, sample_rate=sample_rate,
+                             sample_noise=sample_noise, interleave_blanks=interleave_blanks)
 
 
 ### construct loss functions:
@@ -115,7 +125,6 @@ def train_ctc_network(sig, seq, seq_lengths):
     probs = transcription.permute(2,0,1).contiguous() # expects (sequence, batch, logits)
     prob_lengths = Variable(torch.IntTensor([probs.size(0)] * batch_size))
     labels = seq.cpu().int() # expects flattened labels; label 0 is <BLANK>
-    labels = labels + Variable(torch.ones(seq[0].size()).int())
     ctc_loss = ctc_loss_fn(probs, labels, prob_lengths, seq_lengths)
     if CUDA_FLAG: ctc_loss = ctc_loss.cuda()
     #-- backprop - choose which loss to optimize: total sum, average sum, ctc
