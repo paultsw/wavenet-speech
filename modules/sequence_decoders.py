@@ -77,11 +77,6 @@ class BeamSearchDecoder(object):
         stop_vec = torch.zeros(self.num_labels+2)
         stop_vec[self.num_labels+1] = 1.
         stop_vec = stop_vec.view(1,1,self.num_labels+2).expand(1, logits.size(1), self.num_labels+2)
-        print("START:",start_vec.size())
-        print(start_vec)
-        print("STOP:",stop_vec.size())
-        print(stop_vec)
-        print("LOGITS:", logits.size())
         logits = torch.cat([start_vec, logits, stop_vec], dim=0)
 
         # loop through each timestep of logits (after appending <S> & </S>) and update beams:
