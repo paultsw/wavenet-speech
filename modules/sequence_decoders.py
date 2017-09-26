@@ -3,6 +3,7 @@ sequence_decoders.py: functions to convert a sequence of logits to integer strin
 """
 import torch
 import torch.nn.functional as F
+from modules.beam import Beam
 
 
 def argmax_decode(logits):
@@ -22,7 +23,7 @@ def argmax_decode(logits):
     return labels
 
 
-def labels2strings(labels, lookup={0: 'A', 1: 'G', 2: 'C', 3: 'T', 4: ''}):
+def labels2strings(labels, lookup={0: '', 1: 'A', 2: 'G', 3: 'C', 4: 'T'}):
     """
     Given a batch of labels, convert it to string via integer-to-char lookup table.
 
@@ -40,6 +41,7 @@ def labels2strings(labels, lookup={0: 'A', 1: 'G', 2: 'C', 3: 'T', 4: ''}):
     return strings_list
 
 
+_DEFAULT_BEAM_MAP_ = { '<pad>': 0, '<s>': 5, '</s>': 6 } # mapping of special symbols required for beam decoder
 class BeamSearchDecoder(object):
     """
     A beam search decoder class. Can be called with (e.g.):
@@ -53,67 +55,49 @@ class BeamSearchDecoder(object):
     batch-vector of shape (batch_size, beam_width) indicating the probability of
     each beam for each batch.
     """
-    def __init__(self, batch_size, num_labels, beam_width=5):
+    def __init__(self, batch_size, num_labels, mapping_dict=_DEFAULT_BEAM_MAP_, beam_width=5, cuda=False):
         """Store parameters and initialize the beam."""
         self.beam_width = beam_width
         self.num_labels = num_labels
         self.batch_size = batch_size
-        self.beams = []
-        self.probas = torch.ones(batch_size, beam_width)
+        self.beams = [Beam(beam_width, mapping_dict, cuda=cuda) for _ in range(batch_size)]
 
 
-    def __call__(self, logits):
-        """
-        Scan through the list of logits one timestep at a time and update the beam.
-        
-        `logits` is expected to be of shape (batch_size, sequence_length, num_labels).
-        """
-        for tt in range(logits.size(1)): self.beam_search_step(logits[:,tt,:])
-        return self.format_beam_output()
+    def decode(self, logits):
+        """Decode a batch of logits."""
+        # reshape: (batch, num labels, sequence length)=>(sequence length, batch, num labels)
+        logits = logits.data.permute(2,0,1)
 
+        # append <START> and <STOP> columns and vectors to logits:
+        zero_col = torch.zeros(logits.size(0), logits.size(1), 1)
+        logits = torch.cat([logits, zero_col, zero_col], dim=2)
+        start_vec = torch.zeros(self.num_labels+2)
+        start_vec[self.num_labels] = 1.
+        start_vec = start_vec.view(1,1,self.num_labels+2).expand(1, logits.size(1), self.num_labels+2)
+        stop_vec = torch.zeros(self.num_labels+2)
+        stop_vec[self.num_labels+1] = 1.
+        stop_vec = stop_vec.view(1,1,self.num_labels+2).expand(1, logits.size(1), self.num_labels+2)
+        print("START:",start_vec.size())
+        print(start_vec)
+        print("STOP:",stop_vec.size())
+        print(stop_vec)
+        print("LOGITS:", logits.size())
+        logits = torch.cat([start_vec, logits, stop_vec], dim=0)
 
-    def beam_search_step(self, logit_step):
-        """
-        Given a vector representing logits at one timestep, update the internal beams
-        and probabilities.
+        # loop through each timestep of logits (after appending <S> & </S>) and update beams:
+        for k in range(logits.size(0)):
+            label_lkhd = F.softmax( logits[k].view(self.batch_size, logits.size(2)) ).data
+            label_lkhd = label_lkhd.unsqueeze(1).expand(self.batch_size, self.beam_width, logits.size(2))
+            # update beams:
+            for b in range(self.batch_size):
+                if self.beams[b].done: continue
+                self.beams[b].advance(label_lkhd[b])
 
-        `logit_step` is assumed to be a FloatTensor of shape (batch_size, num_labels).
-
-        * [TODO: optimize this step; TopK might be expensive?]
-        """
-        # outer-product the current probabilities so-far ~ (batch_size, beam_width) with
-        # the logits for each label ~ (batch_size, num_labels):
-        # outer_prod ~ (batch_size, beam_width, num_labels)
-        outer_prod = self.probas.unsqueeze(2) * logit_step.unsqueeze(1)
-
-        # reduce the outer product with a TopK to get most likely beam candidates:
-        topk_probas, topk_ixs = torch.topk(
-            outer_prod.view(self.batch_size, self.beam_width * self.num_labels), self.beam_width, dim=1)
-        new_probas, new_labels = self.translate_topk(topk_probas, topk_ixs)
-        
-        # append the new timestep beams to `self.beams` and update probas:
-        self.beams.append(new_labels)
-        self.probas = new_probas
-
-
-    def translate_topk(self, vals, ixs):
-        """
-        Rearrange the results of a flattened Top-K operation on a tensor of shape
-        (batch_size, beam_width * num_labels).
-        `vals` and `ixs` are both assumed to be of shape (batch_size, beam_width).
-
-        Returns a tuple (probas, labels) where:
-        * probas ~ (batch_size, beam_width) is the updated probability for each beam.
-        * labels ~ (batch_size, beam_width) is the label to append to each beam.
-        """
-        sorted_vals, sort_ixs = torch.sort(vals, dim=1)
-        pass # [TBD]
-
-
-    def format_beam_output(self):
-        """
-        Prepare `self.beams` & `self.probas` for output; return a tuple of decoded
-        sequences and probabilities for each candidate.
-        """
-        stitched_beams = torch.stack(self.beams, dim=2) # [check to make sure this is correct]
-        return stitched_beams, self.probas
+        # extract best hypothesis sequences and return along with unnormalized scores:
+        hypotheses = []
+        probas = []
+        for b in range(self.batch_size):
+            scores, Ks = self.beams[b].sort_best()
+            probas.append( scores[0] )
+            hypotheses.append( self.beams[b].get_hyp(Ks[0]) )
+        return (probas, hypotheses)
