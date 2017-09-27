@@ -15,7 +15,7 @@ class PoreModelLoader(object):
     """
     def __init__(self, max_iters, num_epochs, epoch_size, batch_size=1, num_levels=256,
                  lengths=(20,30), pore_width=4, sample_rate=3, currents_dict=_CURRS_,
-                 sample_noise=3.0, interleave_blanks=False):
+                 sample_noise=3.0, interleave_blanks=False, raw_signal=False):
         """
         Initialize the pore loader.
         
@@ -33,6 +33,7 @@ class PoreModelLoader(object):
         * currents_dict: a { nucleotide => pico-amps } lookup dict.
         * sample_noise: python float, indicates the amount of white noise to add to the signal.
         * interleave_blanks: if True, return blank symbols (0) between each nucleotide ({1-4}) in target seqs.
+        * raw_signal: if True, return the raw (floating point) signals instead of the quantized values.
         """
         # save input params:
         self.max_iters = max_iters
@@ -47,6 +48,7 @@ class PoreModelLoader(object):
         self.currents_dict = currents_dict
         self.sample_noise = sample_noise
         self.interleave_blanks = interleave_blanks
+        self.raw_signal = raw_signal
 
         # internal record-keeping parameters:
         self.counter = 0
@@ -96,6 +98,8 @@ class PoreModelLoader(object):
 
     def convert_to_signal(self, seq):
         picoamp_signal = self.pore_model_fn(seq)
+        if self.raw_signal: return picoamp_signal
+
         quantized = self.quantize_fn(picoamp_signal)
         one_hot_signal = self.one_hot_fn(quantized)
         return one_hot_signal
@@ -110,12 +114,16 @@ class PoreModelLoader(object):
         Returns:
         * signals_batch: np.float32 of shape ( len(signals_list), num_levels, max[signal_length] ).
         """
+        dim = 0 if (self.raw_signal) else 1
         # get max length:
-        pad_length = max([sig.shape[1] for sig in signals_list])
+        pad_length = max([sig.shape[dim] for sig in signals_list])
         # pad all ndarrs and stack together in 0-axis:
         padded_sigs = []
         for sig in signals_list:
-            padded_sigs.append( np.pad(sig, ((0,0),(0,pad_length-sig.shape[1])), mode='constant') )
+            padding = (0,pad_length-sig.shape[dim])
+            if not self.raw_signal:
+                padding = ((0,0), padding)
+            padded_sigs.append( np.pad(sig, padding, mode='constant') )
         # stack and return:
         return np.stack(padded_sigs, axis=0)
 

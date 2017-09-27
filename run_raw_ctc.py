@@ -41,6 +41,7 @@ batch_norm = torch.nn.BatchNorm1d(1)
 if torch.cuda.is_available():
     print("CUDA device detected. Placing on GPU device 0.")
     ctcnet.cuda()
+    batch_norm.cuda()
 
 ctc_loss_fn = CTCLoss()
 ctc_opt = optim.Adam(ctcnet.parameters(), weight_decay=0.0001)
@@ -52,7 +53,9 @@ log_every = 10
 for k in range(num_iterations):
     ctc_opt.zero_grad()
     signals, sequences, sequence_lengths = dataset.fetch()
-    probas = ctcnet(batch_norm(signals.unsqueeze(1)))
+    signals_th = signals.unsqueeze(1)
+    if torch.cuda.is_available(): signals_th = signals_th.cuda()
+    probas = ctcnet(batch_norm(signals_th))
     transcriptions = probas.permute(2,0,1).cpu() # need seq x batch x dim
     transcription_lengths = Variable(torch.IntTensor([transcriptions.size(0)] * batch_size))
     ctc_loss = ctc_loss_fn(transcriptions, sequences, transcription_lengths, sequence_lengths)
