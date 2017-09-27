@@ -104,8 +104,7 @@ class PoreModelLoader(object):
         one_hot_signal = self.one_hot_fn(quantized)
         return one_hot_signal
 
-    @staticmethod
-    def batchify(signals_list):
+    def batchify(self, signals_list):
         """
         Pad a list to uniform length with vectors consisting solely of zeros.
         
