@@ -15,7 +15,7 @@ class RawCTCNet(nn.Module):
     Specification of a classifier network.
     """
     def __init__(self, num_features, feature_kwidth, num_labels, layers, out_dim,
-                 input_kernel_size=2, input_dilation=1, softmax=True):
+                 input_kernel_size=2, input_dilation=1, softmax=True, causal=False):
         """
         Constructor for WaveNetClassifier.
 
@@ -29,6 +29,7 @@ class RawCTCNet(nn.Module):
         * input_kernel_size: size of the internal kernel of the conv1d going from input to conv-stack.
         * input_dilation: dilation for conv block going from input to conv-stack.
         * softmax: if True, softmax the output layer before returning. If False, return un-normalized sequence.
+        * causal: if True, use causal convolutions; otherwise use standard convolutions.
         """
         ### parent constructor
         super(RawCTCNet, self).__init__()
@@ -45,21 +46,27 @@ class RawCTCNet(nn.Module):
         self.input_dilation = input_dilation
         # softmax on/off:
         self.softmax = softmax
+        # causal vs. standard convolutions:
+        self.causal = causal
 
         ### submodules
-        # conv1x1 featurization layer:
-        self.feature_layer = nn.Conv1d(1, num_features, kernel_size=feature_kwidth, padding=(feature_kwidth-1), dilation=1)
+        # convolutional featurization layer:
+        self.feature_layer = nn.Sequential(
+            nn.Conv1d(1, num_features, kernel_size=feature_kwidth, padding=(feature_kwidth-1), dilation=1),
+            nn.LeakyReLU(0.01),
+            nn.Conv1d(num_features, num_features, kernel_size=1, padding=0, dilation=1),
+            nn.LeakyReLU(0.01))
 
         # input layer:
         self.input_block = ResidualBlock(num_features, layers[0][0], input_kernel_size, input_dilation,
-                                         causal=False)
+                                         causal=self.causal)
         self.input_skip_bottleneck = nn.Conv1d(layers[0][0], out_dim, kernel_size=1, padding=0, dilation=1)
 
         # stack of residual convolutions and their bottlenecks for skip connections:
         convolutions = []
         skip_conn_bottlenecks = []
         for (c_in,c_out,k,d) in layers:
-            convolutions.append( ResidualBlock(c_in, c_out, k, d, causal=False) )
+            convolutions.append( ResidualBlock(c_in, c_out, k, d, causal=self.causal) )
             skip_conn_bottlenecks.append( nn.Conv1d(c_out, out_dim, kernel_size=1, padding=0, dilation=1) )
         self.convolutions = nn.ModuleList(convolutions)
         self.bottlenecks = nn.ModuleList(skip_conn_bottlenecks)
@@ -74,16 +81,18 @@ class RawCTCNet(nn.Module):
         ### sensible initializations for parameters:
         eps = 0.0001
         for p in self.feature_layer.parameters():
-            if len(p.size()) > 1: nn_init.kaiming_normal(p)
+            if len(p.size()) > 1: nn_init.kaiming_uniform(p)
             if len(p.size()) == 1: p.data.zero_().add_(torch.randn(p.size()).mul_(eps))
         for p in self.input_block.parameters():
-            if len(p.size()) > 1: nn_init.kaiming_normal(p)
+            if len(p.size()) > 1: nn_init.kaiming_uniform(p)
             if len(p.size()) == 1: p.data.zero_().add_(torch.randn(p.size()).mul_(eps))
         for p in self.convolutions.parameters():
-            if len(p.size()) > 1: nn_init.kaiming_normal(p)
+            if len(p.size()) > 1: nn_init.kaiming_uniform(p)
             if len(p.size()) == 1: p.data.zero_().add_(torch.randn(p.size()).mul_(eps))
         for p in self.bottlenecks.parameters():
-            if len(p.size()) > 1: nn_init.eye(p.view(p.size(0),p.size(1)))
+            if len(p.size()) > 1:
+                nn_init.eye(p.view(p.size(0),p.size(1)))
+                p.data.add_(torch.randn(p.size()).mul_(eps))
             if len(p.size()) == 1: p.data.zero_().add_(torch.randn(p.size()).mul_(eps))
         for p in self.output_block.parameters():
             if len(p.size()) > 1: nn_init.kaiming_uniform(p)
@@ -100,7 +109,7 @@ class RawCTCNet(nn.Module):
         Returns:
         * logit_seq: a FloatTensor variable of shape (batch_size, out_seq_dim, seq_length).
         """
-        # 1. initial mean-pooling to down-sample:
+        # 1. initial featurization from raw:
         out = self.feature_layer(seq)
         
         # pass thru the input layer block:
