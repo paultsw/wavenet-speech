@@ -56,6 +56,9 @@ class GaussianModelLoader(object):
         kmer_seq = generic_filter(sequence, self.nts_to_kmer, size=(5,), mode='constant')
         kmer_seq = kmer_seq[4:-4].astype(int) # (remove, since first/last 4 values are padded)
 
+        # upsample the kmer sequence:
+        if (self.upsampling > 1): kmer_seq = kmer_seq.repeat(self.upsampling, axis=0)
+
         # look up corresponding values in kmer_means, kmer_stdvs:
         kmer_means = np.array([self.kmer_means[k] for k in kmer_seq])
         kmer_stdvs = np.array([self.kmer_stdvs[k] for k in kmer_seq])
@@ -64,8 +67,7 @@ class GaussianModelLoader(object):
         gaussian_signals = np.random.normal(loc=kmer_means, scale=kmer_stdvs)
 
         # upsample and return:
-        signal = gaussian_signals.repeat(self.upsampling, axis=0) if (self.upsampling > 1) else gaussian_signals
-        return signal
+        return gaussian_signals
 
 
     def quantize_fn(self, fseq):
