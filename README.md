@@ -22,3 +22,7 @@ WaveNet Architecture
 Classifier Network
 ------------------
 The classifier network is composed of a mean-pooling layer applied to the output of the WaveNet with non-causal (i.e., standard) Conv1d layers stacked on top of it.
+
+Raw CTC Network
+---------------
+We also introduce a novel network architecture that we call the "raw CTC network", incorporating dilated residual blocks with a (large) featurization layer reading raw waveform data.
