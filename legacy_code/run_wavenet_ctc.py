@@ -14,6 +14,7 @@ from warpctc_pytorch import CTCLoss
 # custom modules:
 from modules.wavenet import WaveNet
 from modules.classifier import WaveNetClassifier as CTCNet
+from models.raw_ctcnet import RawCTCNet
 from modules.beam import Beam
 from modules.sequence_decoders import argmax_decode, labels2strings
 from utils.logging import Logger
