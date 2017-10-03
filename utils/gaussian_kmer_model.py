@@ -11,7 +11,8 @@ class GaussianModelLoader(object):
     An on-line random generator based on Nanopolish's gaussian 5mer model.
     """
     def __init__(self, max_iters, num_epochs, epoch_size, kmer_model_path,
-                 batch_size=1, num_levels=256, upsampling=3, lengths=(20,30)):
+                 batch_size=1, num_levels=256, upsampling=3, random_upsample=False,
+                 lengths=(20,30)):
         """
         Initialize the gaussian 5mer model loader. Reads a pickled 5mer model
         based off of nanopolish's r9.4 5mer template model.
@@ -25,6 +26,7 @@ class GaussianModelLoader(object):
         self.min_length = lengths[0]
         self.max_length = lengths[1]
         self.upsampling = upsampling
+        self.random_upsample = random_upsample
         self.path_to_model = kmer_model_path
 
         # internal record-keeping parameters:
@@ -57,7 +59,11 @@ class GaussianModelLoader(object):
         kmer_seq = kmer_seq[4:-4].astype(int) # (remove, since first/last 4 values are padded)
 
         # upsample the kmer sequence:
-        if (self.upsampling > 1): kmer_seq = kmer_seq.repeat(self.upsampling, axis=0)
+        if (self.upsampling > 1):
+            if not self.random_upsample:
+                kmer_seq = kmer_seq.repeat(self.upsampling, axis=0)
+            else:
+                kmer_seq = random_upsample(kmer_seq, self.upsampling, axis=0)
 
         # look up corresponding values in kmer_means, kmer_stdvs:
         kmer_means = np.array([self.kmer_means[k] for k in kmer_seq])
@@ -177,7 +183,8 @@ class RawGaussianModelLoader(object):
     An on-line random generator based on Nanopolish's gaussian 5mer model.
     """
     def __init__(self, max_iters, num_epochs, epoch_size, kmer_model_path,
-                 batch_size=1, upsampling=3, lengths=(20,30)):
+                 batch_size=1, upsampling=3, random_upsample=False,
+                 lengths=(20,30)):
         """
         Initialize the gaussian 5mer model loader. Reads a pickled 5mer model
         based off of nanopolish's r9.4 5mer template model.
@@ -190,6 +197,7 @@ class RawGaussianModelLoader(object):
         self.min_length = lengths[0]
         self.max_length = lengths[1]
         self.upsampling = upsampling
+        self.random_upsample = random_upsample
         self.path_to_model = kmer_model_path
 
         # internal record-keeping parameters:
@@ -215,16 +223,22 @@ class RawGaussianModelLoader(object):
         kmer_seq = generic_filter(sequence, self.nts_to_kmer, size=(5,), mode='constant')
         kmer_seq = kmer_seq[4:-4].astype(int) # (remove, since first/last 4 values are padded)
 
+        # upsample the kmer sequence:
+        if (self.upsampling > 1):
+            if not self.random_upsample:
+                kmer_seq = kmer_seq.repeat(self.upsampling, axis=0)
+            else:
+                kmer_seq = random_upsample(kmer_seq, self.upsampling, axis=0)
+
         # look up corresponding values in kmer_means, kmer_stdvs:
         kmer_means = np.array([self.kmer_means[k] for k in kmer_seq])
         kmer_stdvs = np.array([self.kmer_stdvs[k] for k in kmer_seq])
 
         # generate gaussians:
         gaussian_signals = np.random.normal(loc=kmer_means, scale=kmer_stdvs)
-
-        # upsample and return:
-        signal = gaussian_signals.repeat(self.upsampling, axis=0) if (self.upsampling > 1) else gaussian_signals
-        return signal
+        
+        # return:
+        return gaussian_signals
 
 
     @staticmethod
@@ -296,3 +310,10 @@ class RawGaussianModelLoader(object):
         """Return True if we are done; return False otherwise"""
         if (self.epochs == self.num_epochs) or (self.counter == self.max_iters):
             raise StopIteration
+
+
+# Random Upsampling helper function:
+def random_upsample(label_seq, repeat_rate, w=2, axis=0):
+    """Randomly repeat each component in a label sequence."""
+    num_repeats = np.random.randint(low=max(repeat_rate-w, 1), high=(repeat_rate+w), size=label_seq.shape)
+    return np.repeat(label_seq, num_repeats, axis=axis)
