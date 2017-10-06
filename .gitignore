@@ -9,3 +9,4 @@ runs/**
 .ipynb_checkpoints
 ipynbs/*.pth
 __pycache__
+utils/r9.4_450bps.5mer.ecoli.model/*
