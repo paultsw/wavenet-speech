@@ -30,26 +30,25 @@ class RawSignalGenerator(object):
     * a numpy histogram of sample lengths per 5mer;
     * a {5mer=>Gaussian} model (e.g. from nanopolish).
     """
-    def __init__(self, kmer_model, sample_counts_model, reference_hdf, read_length_model, batch_size=1):
+    def __init__(self, kmer_model, reference_hdf, read_length_model, sample_rate=800., batch_size=1):
         """
         Initialize the generator by loading all model distributions as attributes.
 
         Args:
         * kmer_model: path to a model file (NPZ format) containing mappings from kmers to gaussians.
-        * sample_counts_model: either path to a model file (NPY) or tuple of integers; if a tuple is
-        provided, use those as the bounds of a uniform distribution for the number of raw samples per 5mer.
         * reference_hdf: path to an HDF5 fiel containing a reference genome, from which random reads
         are drawn; positions on the reference genome are drawn uniformly at random.
         * read_length_model: either path to a model file (NPY) or tuple of integers; if a tuple is
         provided, use those as the bounds of a uniform distribution from which the read length is drawn.
+        * sample_rate: number of samples per second to simulate; should be >> 450 for realism.
         * batch_size: number of data/target sequences per batch.
         """
         # save input params:
         self.batch_size = batch_size
         self.kmer_model = kmer_model
-        self.sample_counts_model = sample_counts_model
         self.reference_hdf = reference_hdf
         self.read_length_model = read_length_model
+        self.sample_rate = sample_rate
 
         # load gaussian model:
         self.num_kmers = 4**5 # total number of 5-mers
@@ -61,6 +60,11 @@ class RawSignalGenerator(object):
         self.reference = h5py.File(reference_hdf, 'r')
         self.contigs = list(self.reference.keys())
 
+        # hard-coded shape/rate parameters for gamma-distributed duration modelling:
+        self.sample_rate = sample_rate
+        self.duration_shape = 2.461964
+        self.duration_rate = 587.2858
+
         # load read lengths model and normalize:
         if isinstance(read_length_model, tuple):
             self.read_lengths = np.zeros(read_length_model[1])
@@ -70,16 +74,6 @@ class RawSignalGenerator(object):
         else:
             self.read_lengths = np.load(read_length_model)
             self.read_lengths = self.read_lengths / np.sum(self.read_lengths)
-
-        # load sample lengths model and normalize:
-        if isinstance(sample_counts_model, tuple):
-            self.sample_lengths = np.zeros(sample_counts_model[1])
-            for k in range(sample_counts_model[0], sample_counts_model[1]):
-                self.sample_lengths[k] = 1.
-            self.sample_lengths = self.sample_lengths / np.sum(self.sample_lengths)
-        else:
-            self.sample_lengths = np.load(sample_counts_model)
-            self.sample_lengths = self.sample_lengths / np.sum(self.sample_lengths)
 
         # define lambda function to convert kmers to integer indices:
         self.nts_to_kmer = lambda nts: np.sum((nts-np.ones(nts.shape)) * np.array([256, 64, 16, 4, 1]))
@@ -100,7 +94,7 @@ class RawSignalGenerator(object):
         kmer_seq = kmer_seq[4:-4].astype(int) # (remove, since first/last 4 values are padded)
 
         # upsample the kmer sequence according to the sample model:
-        kmer_seq = random_upsample(kmer_seq, self.sample_lengths, axis=0)
+        kmer_seq = random_upsample(kmer_seq, self.duration_shape, self.duration_rate, self.sample_rate, axis=0)
 
         # look up corresponding values in kmer_means, kmer_stdvs:
         kmer_means = np.array([self.kmer_means[k] for k in kmer_seq])
@@ -144,11 +138,6 @@ def sample_from_pmf(pmf_array, size=1):
     """Independently draw `size` examples from a probability mass given by `pmf_array`; return as np array."""
     return np.random.choice(np.arange(pmf_array.shape[0]), p=pmf_array, size=size)
 
-def random_upsample(label_seq, repeat_model, axis=0):
-    """Randomly repeat each component in a label sequence according to a distribution of repeats."""
-    num_repeats = sample_from_pmf(repeat_model, size=label_seq.shape)
-    return np.repeat(label_seq, num_repeats, axis=axis)
-
 def fetch_from_reference(ref, contigs, L):
     """Select a random subinterval of length L from a reference genome `ref`."""
     # choose random contig:
@@ -174,3 +163,19 @@ def batchify(signals_list):
         padded_sigs.append( np.pad(sig, (0,pad_length-sig.shape[0]), mode='constant') )
     # stack and return:
     return np.stack(padded_sigs, axis=0)
+
+def random_upsample(label_seq, gamma_shape, gamma_rate, srate, axis=0):
+    """
+    Randomly repeat each component in a label sequence according to a gamma distribution of sample durations.
+
+    Args:
+    * label seq: a sequence of integer labels, to be repeated.
+    * gamma_shape: `shape` parameter of the gamma distribution
+    * gamma_rate: the rate parameter of the duration.
+    * srate: the sample rate.
+    
+    Returns: `label_seq` with each label repeated a random number of times.
+    """
+    num_repeats = (np.random.gamma(gamma_shape, np.reciprocal(gamma_rate), size=label_seq.shape) * srate).astype(np.int32)
+    num_repeats = num_repeats + (num_repeats == 0).astype(np.int32) # enforce num_repeats >= 1
+    return np.repeat(label_seq, num_repeats, axis=axis)
