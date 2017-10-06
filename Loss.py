@@ -15,7 +15,7 @@ class Loss(object):
             self.ctc_loss_fn = CTCLoss()
         self.averaged = averaged
 
-    def calculate(self, signal, signal_pred, transcription_seq, target_seq, target_lengths, avg=True):
+    def calculate(self, signal, signal_pred, transcription_seq, target_seq, target_lengths):
         """
         Returns loss values after computing.
 

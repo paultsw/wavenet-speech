@@ -8,6 +8,11 @@ class Decoder(object):
         assert decoder in ['argmax', 'beam']
         self.decoder_type = decoder
         if decoder == 'beam':
+            self.batch_size = batch_size
+            self.num_labels = num_labels
+            self.mapping_dict = mapping_dict
+            self.beam_width = beam_width
+            self.cuda = cuda
             self.beam_decoder = BeamSearchDecoder(batch_size, num_labels, mapping_dict=mapping_dict,
                                                   beam_width=beam_width, cuda=cuda)
 
@@ -28,3 +33,9 @@ class Decoder(object):
             parsed_decoded = [labels2strings(b, lookup=lookup_dict) for b in decoded]
 
         return (probas, parsed_decoded)
+
+    def refresh_beams(self):
+        """If using beam search decoder, re-initialize the beams."""
+        if self.decoder_type == 'beam':
+            self.beam_decoder = BeamSearchDecoder(self.batch_size, self.num_labels, mapping_dict=self.mapping_dict,
+                                                  beam_width=self.beam_width, cuda=self.cuda)
