@@ -15,7 +15,7 @@ class RawCTCNet(nn.Module):
     Specification of a classifier network.
     """
     def __init__(self, num_features, feature_kwidth, num_labels, layers, out_dim,
-                 input_kernel_size=2, input_dilation=1, softmax=True, causal=False):
+                 input_kernel_size=2, input_dilation=1, positions=False, softmax=True, causal=False):
         """
         Constructor for WaveNetClassifier.
 
@@ -28,6 +28,7 @@ class RawCTCNet(nn.Module):
         * out_dim: the final dimension of the output before the dimensionality reduction to logits over labels.
         * input_kernel_size: size of the internal kernel of the conv1d going from input to conv-stack.
         * input_dilation: dilation for conv block going from input to conv-stack.
+        * positions: if True, use conv1x1 to mix position information to features.
         * softmax: if True, softmax the output layer before returning. If False, return un-normalized sequence.
         * causal: if True, use causal convolutions; otherwise use standard convolutions.
         """
@@ -44,6 +45,8 @@ class RawCTCNet(nn.Module):
         # input 1x1Conv layer:
         self.input_kernel_size = input_kernel_size
         self.input_dilation = input_dilation
+        # position-mixing on/off:
+        self.positions = positions
         # softmax on/off:
         self.softmax = softmax
         # causal vs. standard convolutions:
@@ -56,6 +59,12 @@ class RawCTCNet(nn.Module):
             nn.LeakyReLU(0.01),
             nn.Conv1d(num_features, num_features, kernel_size=1, padding=0, dilation=1),
             nn.LeakyReLU(0.01))
+
+        # position-mixing bilinear layer:
+        if self.positions:
+            self.positions_conv1x1 = nn.Sequential(
+                nn.Conv1d(1, num_features, kernel_size=1, padding=0, dilation=1),
+                nn.LeakyReLU(0.01))
 
         # input layer:
         self.input_block = ResidualBlock(num_features, layers[0][0], input_kernel_size, input_dilation,
@@ -80,6 +89,12 @@ class RawCTCNet(nn.Module):
 
         ### sensible initializations for parameters:
         eps = 0.0001
+        if self.positions:
+            for p in self.positions_conv1x1.parameters():
+                if len(p.size()) > 1:
+                    nn_init.eye(p.view(p.size(0),p.size(1)))
+                    p.data.add_(torch.randn(p.size()).mul_(eps))
+                if len(p.size()) == 1: p.data.zero_().add_(torch.randn(p.size()).mul_(eps))
         for p in self.feature_layer.parameters():
             if len(p.size()) > 1: nn_init.kaiming_uniform(p)
             if len(p.size()) == 1: p.data.zero_().add_(torch.randn(p.size()).mul_(eps))
@@ -109,8 +124,13 @@ class RawCTCNet(nn.Module):
         Returns:
         * logit_seq: a FloatTensor variable of shape (batch_size, out_seq_dim, seq_length).
         """
-        # 1. initial featurization from raw:
+        # initial featurization from raw:
         out = self.feature_layer(seq)
+
+        # optionally mix position information:
+        if self.positions:
+            frame_positions = Variable(seq.data.new(torch.arange(0., seq.size(2))))
+            out = out + self.positions_conv1x1(frame_positions.unsqueeze(0).unsqueeze(1))
         
         # pass thru the input layer block:
         skips_sum = Variable(out.data.new(out.size(0), self.out_dim, out.size(2)).fill_(0.))

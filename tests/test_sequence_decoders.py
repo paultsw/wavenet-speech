@@ -27,8 +27,8 @@ print("Original labels:")
 print(labels)
 
 ##### test stringify:
-print(labels2strings(labels, lookup={0: 'A', 1: 'G', 2: 'C', 3: 'T', 4: ''}))
+print(labels2strings(labels, lookup={0: '<PAD>', 1: 'A', 2: 'G', 3: 'C', 4: 'T', 5: '<S>', 6: '</S>'}))
 
 
 ##### test beam search decoder:
-BeamSearchDecoder(beam_width=4)(logits)
+BeamSearchDecoder(batch_size, num_labels, beam_width=4).decode(Variable(logits.permute(0,2,1)))
