@@ -64,7 +64,7 @@ class RawCTCNet(nn.Module):
         if self.positions:
             self.positions_conv1x1 = nn.Sequential(
                 nn.Conv1d(1, num_features, kernel_size=1, padding=0, dilation=1),
-                nn.LeakyReLU(0.01))
+                nn.Hardtanh())
 
         # input layer:
         self.input_block = ResidualBlock(num_features, layers[0][0], input_kernel_size, input_dilation,
