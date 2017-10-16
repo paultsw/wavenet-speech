@@ -79,47 +79,48 @@ class ResidualBlock(nn.Module):
         return (residual_out, skip_out)
 
 
-### ===== ===== ===== ===== Residual Multiplicative Block. [UNTESTED]
+### ===== ===== ===== ===== Residual Multiplicative Block.
 class ResidualMUBlock(nn.Module):
     """
     A residual multiplicative block (causal) as specified in the ByteNet architecture:
     ("Neural Machine Translation in Linear Time", Kalchbrenner et al, https://arxiv.org/abs/1610.10099).
     """
-    def __init__(self, in_channels, k_width, dilation=1):
+    def __init__(self, nchannels, k_width, dilation=1):
         """Construct a residual multiplicative block; create all submodules."""
         super(ResidualMUBlock, self).__init__()
         # store inputs:
-        self.in_channels = in_channels
+        self.nchannels = nchannels
         self.k_width = k_width
         self.dilation = dilation
+        half_channels = int(nchannels/2)
 
         # submodules:
         self.stack = nn.Sequential(
-            LayerNorm(in_channels),
+            LayerNorm(nchannels),
             nn.ReLU(),
             # Conv1x1, dimensionality reduction by 1/2:
-            nn.Conv1d(in_channels, in_channels/2, 1, stride=1, dilation=1),
-            LayerNorm(in_channels/2, in_channels/2),
+            nn.Conv1d(nchannels, half_channels, 1, stride=1, dilation=1),
+            LayerNorm(half_channels),
             nn.ReLU(),
             # 1xK MU:
-            MultiplicativeUnit(in_channels/2, k_width, dilation=dilation),
+            MultiplicativeUnit(half_channels, k_width, dilation=dilation),
             # 1x1 MU:
-            MultiplicativeUnit(in_channels/2, 1, dilation=1),
+            MultiplicativeUnit(half_channels, 1, dilation=1),
             # Conv1x1, dimensionality expansion to 2x:
-            nn.Conv1d(in_channels/2, in_channels, 1, stride=1, dilation=1))
-
-        # initialize parameters:
-        self.init()
+            nn.Conv1d(half_channels, nchannels, 1, stride=1, dilation=1))
 
     def forward(self, seq):
         """Pass through the [LayerNorm => Conv => MultUnit] stack and add to residual."""
         return (seq + self.stack(seq))
 
     def init(self):
-        """Initialize all values in the block."""
-        pass # [TODO]
+        """Initialize parameters via kaiming-normal on tensors and noisy-zero on biases."""
+        for p in self.parameters():
+            if len(p.size()) >= 2: nn.init.kaiming_normal(p)
+            if len(p.size()) == 1: p.data.zero_().add(0.001 * torch.randn(p.size()))
 
-### ===== ===== ===== ===== Residual ReLU Block. [UNTESTED]
+
+### ===== ===== ===== ===== Residual ReLU Block.
 class ResidualReLUBlock(nn.Module):
     """
     A ByteNet residual block that uses ReLUs instead of Multiplicative units, as described in ByteNet.
@@ -128,40 +129,39 @@ class ResidualReLUBlock(nn.Module):
     Note: this block expects inputs of even dimension, as there is a half-downsampling operation inside
     the block's main module.
     """
-    def __init__(self, in_channels, k_width, dilation=1):
+    def __init__(self, nchannels, k_width, dilation=1):
         """Construct a residual ReLU block; create all submodules."""
         super(ResidualReLUBlock, self).__init__()
         # store inputs:
-        self.in_channels = in_channels
+        self.nchannels = nchannels
         self.k_width = k_width
         self.dilation = dilation
+        half_channels = int(nchannels/2)
         
         # submodules:
         self.stack = nn.Sequential(
-            LayerNorm(in_channels),
+            LayerNorm(nchannels),
             nn.ReLU(),
             # Conv1x1, dimensionality reduction by 1/2:
-            nn.Conv1d(in_channels, in_channels/2, 1, stride=1, dilation=1),
-            LayerNorm(in_channels/2),
+            nn.Conv1d(nchannels, half_channels, 1, stride=1, dilation=1),
+            LayerNorm(half_channels),
             nn.ReLU(),
             # Causal Conv1xK:
-            nn.Conv1d(in_channels/2, in_channels/2, k_width, stride=1, dilation=dilation),
-            LayerNorm(in_channels/2),
+            CausalConv1d(half_channels, half_channels, kernel_width=k_width, dilation=dilation),
+            LayerNorm(half_channels),
             nn.ReLU(),
             # Conv1x1, increase dimension 2x:
-            nn.Conv1d(in_channels/2, in_channels, 1, stride=1, dilation=1))
-
-        # initialize all parameters in this block:
-        self.init()
+            nn.Conv1d(half_channels, nchannels, 1, stride=1, dilation=1))
 
     def forward(self, seq):
         """Pass through the [LayerNorm => Conv => ReLU] stack and add to residual."""
         return (seq + self.stack(seq))
 
     def init(self):
-        """Initialize parameters with kaiming normal."""
-        pass # [TODO]
-
+        """Initialize parameters via kaiming-normal on tensors and noisy-zero on biases."""
+        for p in self.parameters():
+            if len(p.size()) >= 2: nn.init.kaiming_normal(p)
+            if len(p.size()) == 1: p.data.zero_().add(0.001 * torch.randn(p.size()))
 
 ### ===== ===== ===== ===== Gated Activation Unit.
 class GatedActivationUnit(nn.Module):
@@ -178,7 +178,7 @@ class GatedActivationUnit(nn.Module):
         return self.__class__.__name__ + ' ()'
 
 
-### ===== ===== ===== ===== Multiplicative Unit module. [UNTESTED]
+### ===== ===== ===== ===== Multiplicative Unit module.
 class MultiplicativeUnit(nn.Module):
     """
     A multiplicative "activation"; similar to the version in the Video Pixel Network architecture:
@@ -212,5 +212,5 @@ class MultiplicativeUnit(nn.Module):
 
     def init(self):
         for p in self.parameters():
-            if len(p.size()) >= 2: pass # [TBD]
+            if len(p.size()) >= 2: nn.init.kaiming_normal(p)
             if len(p.size()) == 1: p.data.zero_().add(0.001 * torch.randn(p.size()))
