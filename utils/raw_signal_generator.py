@@ -26,22 +26,27 @@ from scipy.ndimage.filters import generic_filter
 class RawSignalGenerator(object):
     """
     An on-line random generator based on:
-    * A reference genome from which we sample random lengths (converted to NPY format);
-    * a numpy histogram of sample lengths per 5mer;
-    * a {5mer=>Gaussian} model (e.g. from nanopolish).
+    * A reference genome (in HDF5 format) from which we sample reads of random lengths;
+    * a {5mer=>Gamma(a,b)} model of num. samples per 5mer;
+    * a {5mer=>Gaussian(mu,sigma)} model of picoamp mean/stdv per 5mer (e.g. from nanopolish's r9 models).
+    
+    You can generate each of the above by running the appropriate scripts in this directory.
     """
-    def __init__(self, kmer_model, reference_hdf, read_length_model, sample_rate=800., batch_size=1):
+    def __init__(self, kmer_model, reference_hdf, read_length_model, sample_rate=800., batch_size=1,
+                 dura_shape=None, dura_rate=None):
         """
         Initialize the generator by loading all model distributions as attributes.
 
         Args:
         * kmer_model: path to a model file (NPZ format) containing mappings from kmers to gaussians.
-        * reference_hdf: path to an HDF5 fiel containing a reference genome, from which random reads
+        * reference_hdf: path to an HDF5 file containing a reference genome, from which random reads
         are drawn; positions on the reference genome are drawn uniformly at random.
         * read_length_model: either path to a model file (NPY) or tuple of integers; if a tuple is
         provided, use those as the bounds of a uniform distribution from which the read length is drawn.
         * sample_rate: number of samples per second to simulate; should be >> 450 for realism.
         * batch_size: number of data/target sequences per batch.
+        * dura_shape, dura_rate: if these are provided and are floats, these will override the default
+        parameters of the duration model.
         """
         # save input params:
         self.batch_size = batch_size
@@ -49,6 +54,8 @@ class RawSignalGenerator(object):
         self.reference_hdf = reference_hdf
         self.read_length_model = read_length_model
         self.sample_rate = sample_rate
+        self.dura_shape_arg = dura_shape
+        self.dura_rate_arg = dura_rate
 
         # load gaussian model:
         self.num_kmers = 4**5 # total number of 5-mers
@@ -62,8 +69,8 @@ class RawSignalGenerator(object):
 
         # hard-coded shape/rate parameters for gamma-distributed duration modelling:
         self.sample_rate = sample_rate
-        self.duration_shape = 2.461964
-        self.duration_rate = 587.2858
+        self.duration_shape = 2.461964 if dura_shape is None else dura_shape
+        self.duration_rate = 587.2858 if dura_rate is None else dura_rate
 
         # load read lengths model and normalize:
         if isinstance(read_length_model, tuple):
@@ -75,8 +82,10 @@ class RawSignalGenerator(object):
             self.read_lengths = np.load(read_length_model)
             self.read_lengths = self.read_lengths / np.sum(self.read_lengths)
 
-        # define lambda function to convert kmers to integer indices:
-        self.nts_to_kmer = lambda nts: np.sum((nts-np.ones(nts.shape)) * np.array([256, 64, 16, 4, 1]))
+
+    def nts_to_kmer(self, nts):
+        """Define lambda function to convert kmers to integer indices."""
+        return np.sum((nts-np.ones(nts.shape)) * np.array([256, 64, 16, 4, 1]))
 
 
     def close(self):
@@ -91,7 +100,8 @@ class RawSignalGenerator(object):
         """
         # extract list of kmers from moving window across sequence as integer in [0,1023]:
         kmer_seq = generic_filter(sequence, self.nts_to_kmer, size=(5,), mode='constant')
-        kmer_seq = kmer_seq[4:-4].astype(int) # (remove, since first/last 4 values are padded)
+        kmer_seq = kmer_seq[3:].astype(int) # FIX: handle padding
+        #return kmer_seq # [FOR DEBUG]
 
         # upsample the kmer sequence according to the sample model:
         kmer_seq = random_upsample(kmer_seq, self.duration_shape, self.duration_rate, self.sample_rate, axis=0)
