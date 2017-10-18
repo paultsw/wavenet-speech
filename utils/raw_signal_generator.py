@@ -33,7 +33,7 @@ class RawSignalGenerator(object):
     You can generate each of the above by running the appropriate scripts in this directory.
     """
     def __init__(self, kmer_model, reference_hdf, read_length_model, sample_rate=800., batch_size=1,
-                 dura_shape=None, dura_rate=None):
+                 dura_shape=None, dura_rate=None, pad_label=0):
         """
         Initialize the generator by loading all model distributions as attributes.
 
@@ -47,6 +47,9 @@ class RawSignalGenerator(object):
         * batch_size: number of data/target sequences per batch.
         * dura_shape, dura_rate: if these are provided and are floats, these will override the default
         parameters of the duration model.
+        * pad_label: the integer label of the padding value for the underlying nucleotide sequence.
+        (N.B.: padding labels other than '0' are currently unsupported and will raise an error. Support
+        is planned for further down the roadmap.)
         """
         # save input params:
         self.batch_size = batch_size
@@ -56,6 +59,8 @@ class RawSignalGenerator(object):
         self.sample_rate = sample_rate
         self.dura_shape_arg = dura_shape
         self.dura_rate_arg = dura_rate
+        self.pad_label = pad_label
+        if pad_label != 0: raise ValueError("ERR: padding values other than 0 are currently unsupported.")
 
         # load gaussian model:
         self.num_kmers = 4**5 # total number of 5-mers
@@ -100,8 +105,7 @@ class RawSignalGenerator(object):
         """
         # extract list of kmers from moving window across sequence as integer in [0,1023]:
         kmer_seq = generic_filter(sequence, self.nts_to_kmer, size=(5,), mode='constant')
-        kmer_seq = kmer_seq[3:].astype(int) # FIX: handle padding
-        #return kmer_seq # [FOR DEBUG]
+        kmer_seq = kmer_seq[2:-2].astype(np.int64) # remove kmers that rely on paddings
 
         # upsample the kmer sequence according to the sample model:
         kmer_seq = random_upsample(kmer_seq, self.duration_shape, self.duration_rate, self.sample_rate, axis=0)
@@ -119,27 +123,35 @@ class RawSignalGenerator(object):
 
     def fetch(self):
         """
-        Generate and fetch a (signal, sequence, lengths) triple, where:
-        * signal: a FloatTensor variable of shape (batch_size, num_levels, signal_seq_length)
+        Generate and fetch a (signal, sequence, sig_lengths, seq_lengths) tuple, where:
+        * signal: a FloatTensor variable of shape (batch_size, signal_seq_length) representing the raw
+        floating point picoamp values sampled from the gaussian 5mer model.
         * sequence: an IntTensor variable of shape SUM{ len(seq1), len(seq2), ... }
         made up of concatenated sequences. (This is the format expected by the CTC loss operation.)
-        * lengths: a 1D IntTensor variable of size (batch_size) giving the lengths of each
+        * sig_lengths: a 1D IntTensor variable of size (batch_size) giving the lengths of each
+        signal in the batch.
+        * seq_lengths: a 1D IntTensor variable of size (batch_size) giving the lengths of each
         sequence in the batch.
         """
         ### sample a list of candidate lengths:
-        lengths = sample_from_pmf(self.read_lengths, size=self.batch_size)
-        lengths_th = torch.IntTensor(lengths.astype(np.int32))
+        seq_lengths = sample_from_pmf(self.read_lengths, size=self.batch_size)
+        seq_lengths_th = torch.IntTensor(seq_lengths.astype(np.int32))
 
         ### sample a batch of random sequences:
-        seqs = [fetch_from_reference(self.reference, self.contigs, k) for k in lengths]
-        seq = torch.from_numpy(np.concatenate(seqs)).int()
+        seqs = [fetch_from_reference(self.reference, self.contigs, k) for k in seq_lengths]
+        seq = torch.from_numpy(batchify(seqs)).long()
 
         ### for each sequence, sample a signal sequence and stack into a batch:
         signals = [self.gaussian_model_fn(sq) for sq in seqs]
         signal = torch.from_numpy(batchify(signals)).float()
+        sig_lengths = [sgl.shape[-1] for sgl in signals]
+        sig_lengths_th = torch.IntTensor(np.array(sig_lengths, dtype=np.int32))
 
         ### return as torch.autograd.Variable on CPU:
-        outs = (torch.autograd.Variable(signal), torch.autograd.Variable(seq), torch.autograd.Variable(lengths_th))
+        outs = (torch.autograd.Variable(signal),
+                torch.autograd.Variable(seq),
+                torch.autograd.Variable(sig_lengths_th),
+                torch.autograd.Variable(seq_lengths_th))
         return outs
 
 
@@ -156,23 +168,23 @@ def fetch_from_reference(ref, contigs, L):
     pos = np.random.randint(ctg.shape[0]-L)
     return ctg[pos:(pos+L)]
 
-def batchify(signals_list):
+def batchify(seqs_list):
     """
     Pad a list to uniform length with vectors consisting solely of zeros.
     
     Args:
-    * signals_list: a list of np.float32 arrays, each of shape (signal_length,).
+    * seqs_list: a list of np.float32 or np.int64 arrays, each of shape (seq_length,).
     Returns:
-    * signals_batch: np.float32 of shape ( len(signals_list), num_levels, max[signal_length] ).
+    * seqs_batch: np.float32 of shape ( len(seqs_list), max[seqs_length] ).
     """
     # get max length:
-    pad_length = max([sig.shape[0] for sig in signals_list])
+    pad_length = max([seq.shape[0] for seq in seqs_list])
     # pad all ndarrs and stack together in 0-axis:
-    padded_sigs = []
-    for sig in signals_list:
-        padded_sigs.append( np.pad(sig, (0,pad_length-sig.shape[0]), mode='constant') )
+    padded_seqs = []
+    for seq in seqs_list:
+        padded_seqs.append( np.pad(seq, (0, pad_length-seq.shape[0]), mode='constant') )
     # stack and return:
-    return np.stack(padded_sigs, axis=0)
+    return np.stack(padded_seqs, axis=0)
 
 def random_upsample(label_seq, gamma_shape, gamma_rate, srate, axis=0):
     """
