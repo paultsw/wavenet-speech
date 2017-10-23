@@ -33,6 +33,8 @@ class CausalConv1d(nn.Module):
             padding=self.padding,
             dilation=dilation)
 
+        # compute receptive field:
+        self.receptive_field = self.conv1d.kernel_size[0] + (self.conv1d.dilation[0]-1)*(self.conv1d.kernel_size[0]-1)
 
     def forward(self, seq):
         """
@@ -65,6 +67,8 @@ class NonCausalConv1d(nn.Module):
             padding=self.padding,
             dilation=dilation)
 
+        # compute receptive field:
+        self.receptive_field = self.conv1d.kernel_size[0] + (self.conv1d.dilation[0]-1)*(self.conv1d.kernel_size[0]-1)
 
     def forward(self, seq):
         """

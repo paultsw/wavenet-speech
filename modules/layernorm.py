@@ -13,17 +13,18 @@ class LayerNorm(nn.Module):
     `features` is the dimensionality of the convolutional sequence, expected to be
     BCS format (== (batch, nchannels, sequence_length)).
     
-    Layer-norming is done across the channel dimension.
+    Layer-norming is done across the dimension indicated by `dim`.
     """
-    def __init__(self, features, eps=1e-6):
+    def __init__(self, features, dim=1, eps=1e-6):
         super(LayerNorm, self).__init__()
         self.gamma = nn.Parameter(torch.ones(features)).unsqueeze(0).unsqueeze(2)
         self.beta = nn.Parameter(torch.zeros(features)).unsqueeze(0).unsqueeze(2)
         self.eps = eps
+        self.dim = dim
 
     def forward(self, x):
-        mean = x.mean(1, keepdim=True).expand_as(x)
-        std = x.std(1, keepdim=True).expand_as(x)
+        mean = x.mean(self.dim, keepdim=True).expand_as(x)
+        std = x.std(self.dim, keepdim=True).expand_as(x)
         return self.gamma.expand_as(x) * (x - mean) / (std + self.eps) + self.beta.expand_as(x)
 
     def cuda(self):

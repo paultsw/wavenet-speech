@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-from modules.conv_ops import CausalConv1d, NonCausalConv1d, reshape_in, reshape_out
+from modules.conv_ops import  CausalConv1d, NonCausalConv1d, reshape_in, reshape_out
 from modules.layernorm import LayerNorm
 from collections import OrderedDict
 
@@ -46,6 +46,9 @@ class ResidualBlock(nn.Module):
         self.conv1x1_skip = nn.Conv1d(out_channels, out_channels, kernel_size=1)
         self.gated_activation = GatedActivationUnit()
         self.residual_proj = nn.Linear(in_channels, out_channels)
+
+        # compute receptive field:
+        self.receptive_field = self.conv_tanh.receptive_field
 
 
     def forward(self, seq):
@@ -100,7 +103,7 @@ class ResidualMUBlock(nn.Module):
             nn.ReLU(),
             # Conv1x1, dimensionality reduction by 1/2:
             nn.Conv1d(nchannels, half_channels, 1, stride=1, dilation=1),
-            LayerNorm(half_channels),
+            LayerNorm(half_channels, dim=1),
             nn.ReLU(),
             # 1xK MU:
             MultiplicativeUnit(half_channels, k_width, dilation=dilation),
@@ -108,6 +111,9 @@ class ResidualMUBlock(nn.Module):
             MultiplicativeUnit(half_channels, 1, dilation=1),
             # Conv1x1, dimensionality expansion to 2x:
             nn.Conv1d(half_channels, nchannels, 1, stride=1, dilation=1))
+
+        # compute receptive field:
+        self.receptive_field = self.stack[5].receptive_field
 
     def forward(self, seq):
         """Pass through the [LayerNorm => Conv => MultUnit] stack and add to residual."""
@@ -153,6 +159,9 @@ class ResidualReLUBlock(nn.Module):
             # Conv1x1, increase dimension 2x:
             nn.Conv1d(half_channels, nchannels, 1, stride=1, dilation=1))
 
+        # compute receptive field:
+        self.receptive_field = self.stack[5].receptive_field
+
     def forward(self, seq):
         """Pass through the [LayerNorm => Conv => ReLU] stack and add to residual."""
         return (seq + self.stack(seq))
@@ -162,6 +171,7 @@ class ResidualReLUBlock(nn.Module):
         for p in self.parameters():
             if len(p.size()) >= 2: nn.init.kaiming_normal(p)
             if len(p.size()) == 1: p.data.zero_().add(0.001 * torch.randn(p.size()))
+
 
 ### ===== ===== ===== ===== Gated Activation Unit.
 class GatedActivationUnit(nn.Module):
@@ -192,21 +202,24 @@ class MultiplicativeUnit(nn.Module):
     def __init__(self, ndim, k, dilation=1):
         super(MultiplicativeUnit, self).__init__()
         self.ndim = ndim
-        self.gate1 = nn.Sequential(CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation),
-                                   nn.Sigmoid())
-        self.gate2 = nn.Sequential(CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation),
-                                   nn.Sigmoid())
-        self.gate3 = nn.Sequential(CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation),
-                                   nn.Sigmoid())
-        self.update = nn.Sequential(CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation),
-                                    nn.Tanh())
+        self.gate1 = CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation)
+        self.ln1 = LayerNorm(ndim, dim=1)
+        self.gate2 = CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation)
+        self.ln2 = LayerNorm(ndim, dim=1)
+        self.gate3 = CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation)
+        self.ln3 = LayerNorm(ndim, dim=1)
+        self.update = CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation)
+        self.lnu = LayerNorm(ndim, dim=1)
         self.init() # initialize parameters
 
+        self.receptive_field = max([self.gate1.receptive_field, self.gate2.receptive_field,
+                                    self.gate3.receptive_field, self.update.receptive_field])
+
     def forward(self, h):
-        g1 = self.gate1(h)
-        g2 = self.gate2(h)
-        g3 = self.gate3(h)
-        u = self.update(h)
+        g1 = F.sigmoid(self.ln1(self.gate1(h)))
+        g2 = F.sigmoid(self.ln2(self.gate2(h)))
+        g3 = F.sigmoid(self.ln3(self.gate3(h)))
+        u = F.tanh(self.lnu(self.update(h)))
         # g1 * tanh( g2 * h + g3 * u ):
         return (g1.mul(F.tanh(g2.mul(h) + g3.mul(u))))
 

@@ -5,6 +5,11 @@ These are convolutional modules which additionally offer a `linear()` method, wh
 provides a functional interface to the underlying parameters of the convolutional
 kernel; this allows e.g. convolutions to be computed *incrementally* across the sequence,
 as we require in the decoder.
+
+Additionally, there is a property `*.receptive_field` that determines the required timesteps
+before a call of `linear()` can occur; this property increases in the sequence dimension as
+modules containing a LinearConv1d submodule get more complex, and can be used as a check to
+ensure that enough timesteps are available.
 """
 import torch
 import torch.nn as nn
@@ -28,7 +33,7 @@ class LinearConv1d(nn.Conv1d):
     def linear(self, frame, keep_dims=False):
         """
         Args:
-        * frame: a {cuda.,cpu.}FloatTensor Variable of shape (batch, in_channels, dilation*kernel_size-1);
+        * frame: a {cuda.,cpu.}FloatTensor Variable of shape (batch, in_channels, receptive_field);
         this is the frame at a given timestep that will be functionally passed through a linear layer
         given by the convolutional kernel and bias.
         
@@ -38,9 +43,13 @@ class LinearConv1d(nn.Conv1d):
         If `keep_dims == True`, the output is of shape `(batch, out_channels, 1)`.
         """
         # sanity check:
-        assert ( frame.size(2) == self.kernel_size[0] + (self.dilation[0]-1)*(self.kernel_size[0]-1) )
+        assert ( frame.size(2) == self.receptive_field )
 
-        # compute output: ~ (N, c_out)
+        # run forward pre hooks (e.g., weight norm)
+        for hook in self._forward_pre_hooks.values():
+            hook(self, frame)
+
+        # compute `out ~ (N, c_out)` using reshaped kernel and bias:
         out = F.linear(
             # # reshape frame to (N, c_in * ker_size), dropping the dilation-skipped timesteps:
             frame[:,:,self._ker_ixs].view(frame.size(0), frame.size(1)*self.kernel_size[0]),
@@ -51,6 +60,11 @@ class LinearConv1d(nn.Conv1d):
         # return, possibly with dummy dimension:
         out = out.unsqueeze(2) if keep_dims else out
         return out
+
+    @property
+    def receptive_field(self):
+        """Determines the number of timesteps needed before we can output a single frame in `linear()`."""
+        return ( self.kernel_size[0] + (self.dilation[0]-1)*(self.kernel_size[0]-1) )
 
 
 ### Linear, causal:
@@ -65,7 +79,7 @@ class LinearCausalConv1d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_width, dilation=1):
         """Create underlying causal convolution."""
         # run parent initialization:
-        super(CausalConv1d, self).__init__()
+        super(LinearCausalConv1d, self).__init__()
         
         # save arguments as attributes:
         self.in_channels = in_channels
@@ -89,9 +103,13 @@ class LinearCausalConv1d(nn.Module):
         conv1d_out = self.conv1d(seq)
         return conv1d_out[:,:,0:seq.size(2)]
 
-    def linear(self, frame):
+    def linear(self, frame, keep_dims=False):
         """Call the linearized version of the underlying parameters."""
-        return self.conv1d.linear(frame)
+        return self.conv1d.linear(frame, keep_dims=keep_dims)
+
+    @property
+    def receptive_field(self):
+        return self.conv1d.receptive_field
 
 
 ### Linear, Non-causal:
@@ -102,7 +120,7 @@ class LinearNonCausalConv1d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_width, dilation=1):
         """Create an auto-padded conv1d."""
         # run parent initialization:
-        super(NonCausalConv1d, self).__init__()
+        super(LinearNonCausalConv1d, self).__init__()
 
         # save arguments as attributes:
         self.in_channels = in_channels
@@ -126,10 +144,13 @@ class LinearNonCausalConv1d(nn.Module):
         conv1d_out = self.conv1d(seq)
         return conv1d_out[:,:,0:seq.size(2)]
 
-    def linear(self, frame):
+    def linear(self, frame, keep_dims=False):
         """Call the linearized version of the underlying parameters."""
-        return self.conv1d.linear(frame)
+        return self.conv1d.linear(frame, keep_dims=keep_dims)
 
+    @property
+    def receptive_field(self):
+        return self.conv1d.receptive_field
 
 # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
 # Helper Functions

@@ -3,6 +3,13 @@ The decoder from ByteNet, as described in:
 
 "Neural Machine Translation in Linear Time", N. Kalchbrenner et al,
 https://arxiv.org/abs/1610.10099
+
+Credits:
+While the usage of the input buffer during incremental forward passes of the
+decoder is novel, inspiration was taken from the fairseq architecture by Facebook
+Research:
+https://github.com/facebookresearch/fairseq-py/blob/master/ \
+  fairseq/modules/linearized_convolution.py
 """
 import torch
 import torch.nn as nn
@@ -19,7 +26,8 @@ class ByteNetDecoder(nn.Module):
     sequence after shifting by 1; however, in evaluation mode we must loop around the convolutional
     module by linearizing it and feeding the previous timestep's prediction back into it.
     """
-    def __init__(self, num_labels, encoding_dim, channels, kwidth, output_dim, layers, block='mult'):
+    def __init__(self, num_labels, encoding_dim, channels, kwidth, output_dim, layers, block='mult',
+                 pad=0, start=5, stop=6, max_timesteps=500):
         """
         Construct all submodules and save parameters.
         
@@ -32,6 +40,10 @@ class ByteNetDecoder(nn.Module):
         * output_dim: the dimensionality of the output mapping layers.
         * layers: a python list of integer tuples of the form [(kwidth, dilation)].
         * block: either 'mult' or 'relu'; decides which type of causal ResConv block to use.
+        * pad: the padding label (python integer).
+        * start: the start label (python integer).
+        * stop: stop label (python integer).
+        * max_timesteps: don't decode past this number of timesteps.
         """
         super(ByteNetDecoder, self).__init__()
         # save inputs:
@@ -44,6 +56,10 @@ class ByteNetDecoder(nn.Module):
             raise TypeError("The `block` setting must be either `relu` or `mult`.")
         self.block = block
         ResBlock = ResidualMUBlock if (block == 'mult') else ResidualReLUBlock
+        self.pad_label = pad
+        self.start_label = start
+        self.stop_label = stop
+        self.max_timesteps = max_timesteps
         
         # construct input embedding and Conv1x1 layer:
         self.input_embed = nn.Embedding(num_labels, 2*channels)
@@ -54,7 +70,7 @@ class ByteNetDecoder(nn.Module):
         
         # stack of causal residual convolutional blocks:
         self.stacked_residual_layer = nn.Sequential(OrderedDict(
-            [('resconv{}'.format(l),ResBlock(2*channels, k, dilation=d)) for (l,(k,d)) in enumerate(layers)]
+            [('resconv{}'.format(l_idx),ResBlock(2*channels, k, dilation=d)) for (l_idx,(k,d)) in enumerate(layers)]
         ))
         
         # Final [Conv1x1=>ReLU=>Conv1x1] mapping to construct outputs:
@@ -62,6 +78,12 @@ class ByteNetDecoder(nn.Module):
             nn.Conv1d(2*channels, output_dim, kernel_size=1, dilation=1),
             nn.ReLU(),
             nn.Conv1d(output_dim, num_labels, kernel_size=1, dilation=1))
+
+        # compute receptive field:
+        _rf = 1
+        for layer in self.stacked_residual_layer:
+            _rf += (layer.receptive_field - 1)
+        self.receptive_field = _rf
 
 
     def init(self):
@@ -71,31 +93,69 @@ class ByteNetDecoder(nn.Module):
             if len(p.size()) == 1: p.data.zero_().add(0.0001 * torch.randn(p.size()))
 
 
-    def forward(self, target_seq, encoded_seq):
+    def linear(self, dec_frames, enc_frames):
         """
-        Forward pass for training. (To perform inference without a known target sequence, use `evaluate()`.)
+        Given an initial collection of input frames, perform evaluation using a linearized version
+        of the modules, emitting a single timestep each time this is called.
+
+        **This should NOT be used for training; you should use this for evaluation of a single timestep.**
+
+        Note: we recommend `seq == receptive_field`, as otherwise padding will be automatically applied
+        at the start of both sequences until .
+
+        Args:
+        * dec_frames ~ LongTensor Variable of shape `(batch, seq)`
+        * enc_frames ~ FloatTensor Variable of shape `(batch, encoding_dim, seq)`
         
-        Expects `target_seq` to be a sequence of type Variable(LongTensor) and `encoded_seq` to be a
-        sequence of type Variable(FloatTensor).
-        
-        N.B.: You need to shift the `target_seq` value manually in the training loop! This is important;
-        if you don't shift the target sequence, this entire module will just learn to be a very expensive
-        version of the identity mapping.
+        Returns:
+        * logits ~ FloatTensor Variable of shape `(batch, num_labels, 1)`. Probability of next label.
         """
-        out_seq = self.input_embed(target_seq).transpose(1,2) # embed & reshape[BSC=>BCS]
-        out_seq = self.input_conv1x1(out_seq)
-        out_seq = out_seq + self.encoding_layer(encoded_seq)
-        out_seq = self.stacked_residual_layer(out_seq)
-        out_seq = self.output_layer(out_seq)
-        return out_seq
+        # sanity check:
+        assert (dec_frames.size(1) == enc_frames.size(2))
+        # run bytenet stack:
+        o = self.input_embed(dec_frames).transpose(1,2) # embed & reshape[BSC=>BCS]
+        o = self.input_conv1x1(o)
+        o = o + self.encoding_layer(enc_frames)
+        o = self.stacked_residual_layer(o)
+        o = self.output_layer(o)
+        # return final timestep
+        return o[:,:,-1]
 
 
-    def evaluate(self, x0, encoded_seq):
+    def forward(self, encoded_seq, teacher_sequence=None, teacher_ratio=0.5):
         """
-        Given an initial timestep, perform evaluation using a linearized version of the modules.
+        Take an encoded sequence and loop over the dataset, starting with an initial set of frames of
+        minimal temporal dimensionality (== receptive_field) given by `[<PAD>] * rf-1 + [<START>]`.
         
-        Expects an initial timestep input x0 ~ LongTensor of shape (batch,ndim).
+        An internal buffer of outputs is maintained.
+
+        Additionally, a `teacher_sequence` can be passed; if not None, then for each timestep t,
+        with `probability == teacher_ratio` the value teacher_sequence[t-1] be passed as input.
         """
-        # [TBD: what's a good way of linearizing a stack of convolutions in torch???]
-        # [To save time, work on this function /after/ noticeable gains in training.]
-        return None
+        # create a new buffer ~ (1,receptive_field) LongTensor:
+        _buffer = [self.pad_label] * self.receptive_field + [self.start_label]
+        label_buffer = torch.LongTensor(_buffer).view(1,-1).expand(encoded_seq.size(0),self.receptive_field)
+        if encoded_seq.is_cuda: label_buffer = label_buffer.cuda() # (load on CUDA if necessary)
+
+        # loop until finish:
+        output_buffer = []
+        num_encoder_steps = encoded_seq.size(2)
+        for k in range(self.max_timesteps):
+            # compute output logits for next timestep:
+            o = self.linear() # [FIX]
+            
+            # append to outputs:
+            output_buffer.append(o) # [FIX]
+
+            # compute argmax:
+            ixs, vals = torch.max() # [FIX]
+            
+            # quit if stop labels observed in all positions:
+            if (ixs.data == self.stop_label).sum() == batch_size: pass # [FIX]
+            
+            # shift buffer by 1 step, accommodating the new output:
+            label_buffer[:,:,:-1] = label_buffer[:,:,1:].clone()
+            label_buffer[:,:,-1] = o
+
+        # return output steps:
+        return torch.cat(output_buffer, dim=2)
