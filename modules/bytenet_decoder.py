@@ -22,11 +22,13 @@ class ByteNetDecoder(nn.Module):
     logits at each timestep, mixes it with an encoded representation, and returns a batch of logits
     representing the predicted next timestep.
 
-    In training mode, we can take the whole target sequence as input and train against the same target
-    sequence after shifting by 1; however, in evaluation mode we must loop around the convolutional
-    module by linearizing it and feeding the previous timestep's prediction back into it.
+    This can be used in two ways: if training against cross entropy loss (with known alignments in
+    the target sequence), the sequence can be trained against the whole target sequence to predict
+    the next timestep. If training with unknown alignment against a target sequence, we can loop
+    linearly over the internal convolutions one-at-a-time until either `max_timesteps` is reached
+    or until we observe a <STOP> label.
     """
-    def __init__(self, num_labels, encoding_dim, channels, kwidth, output_dim, layers, block='mult',
+    def __init__(self, num_labels, encoding_dim, channels, output_dim, layers, block='mult',
                  pad=0, start=5, stop=6, max_timesteps=500):
         """
         Construct all submodules and save parameters.
@@ -36,7 +38,6 @@ class ByteNetDecoder(nn.Module):
         * encoding_dim: dimension of the output timesteps of the encoded source sequence.
         * channels: the number of channels at each resblock; each tensor in the network will
         have either `channels` or `2*channels` dimensions (depending on the specific sub-module.)
-        * kwidth: the kernel size for the stack of residual blocks.
         * output_dim: the dimensionality of the output mapping layers.
         * layers: a python list of integer tuples of the form [(kwidth, dilation)].
         * block: either 'mult' or 'relu'; decides which type of causal ResConv block to use.
@@ -108,10 +109,10 @@ class ByteNetDecoder(nn.Module):
         * enc_frames ~ FloatTensor Variable of shape `(batch, encoding_dim, seq)`
         
         Returns:
-        * logits ~ FloatTensor Variable of shape `(batch, num_labels, 1)`. Probability of next label.
+        * FloatTensor Variable of shape `(batch, num_labels)`. Probability of next label.
         """
         # sanity check:
-        assert (dec_frames.size(1) == enc_frames.size(2))
+        #assert (dec_frames.size(1) == enc_frames.size(2))
         # run bytenet stack:
         o = self.input_embed(dec_frames).transpose(1,2) # embed & reshape[BSC=>BCS]
         o = self.input_conv1x1(o)
@@ -131,31 +132,61 @@ class ByteNetDecoder(nn.Module):
 
         Additionally, a `teacher_sequence` can be passed; if not None, then for each timestep t,
         with `probability == teacher_ratio` the value teacher_sequence[t-1] be passed as input.
+
+        Args:
+        * encoded_seq: a FloatTensor variable of shape (batch, encoding_dim, encoded_seq_length).
+        * teacher_seq: a LongTensor variable of shape (batch, teacher_seq_length). At each timestep less
+        than `teacher_seq_length`, we randomly choose between the previous timestep's predicted input
+        and the teacher input at this step.
+        * teacher_ratio: python float between 0.0 and 1.0 that indicates probability of choosing the
+        teacher sequence's input instead of the previous predicted next-step.
+
+        Returns: a tuple (output_sequence, output_lengths) where:
+        * `output_sequence` is a FloatTensor variable of shape (batch, num_labels, num_timesteps).
+        * `output_lengths`: is an IntTensor variable of shape (batch); contains the lengths of each
+        output transcription sequence, from first timestep to the timestep at which <STOP> was emitted.
         """
+        # teacher-forcing is currently unimplemented:
+        if teacher_sequence is not None: raise TypeError("ERR: teacher forcing is not implemented yet.")
+
+        batch_size = encoded_seq.size(0)
         # create a new buffer ~ (1,receptive_field) LongTensor:
-        _buffer = [self.pad_label] * self.receptive_field + [self.start_label]
-        label_buffer = torch.LongTensor(_buffer).view(1,-1).expand(encoded_seq.size(0),self.receptive_field)
+        _buffer = [self.pad_label] * (self.receptive_field-1) + [self.start_label]
+        label_buffer = torch.LongTensor(_buffer).view(1,-1).expand(batch_size,self.receptive_field)
         if encoded_seq.is_cuda: label_buffer = label_buffer.cuda() # (load on CUDA if necessary)
+
+        # pad encoded sequence with <PAD> characters:
+        encoded_pad = encoded_seq.data.new(batch_size, self.encoding_dim, self.receptive_field-1+encoded_seq.size(2))
+        encoded_pad[:,:,(self.receptive_field-1):] = encoded_seq.data.clone()
 
         # loop until finish:
         output_buffer = []
-        num_encoder_steps = encoded_seq.size(2)
+        num_enc_steps = encoded_seq.size(2)
+        output_lengths = torch.zeros(batch_size,2) # [:,0] ~ lengths; [:,1] ~ finished
+        if encoded_seq.is_cuda: output_lengths.cuda()
         for k in range(self.max_timesteps):
-            # compute output logits for next timestep:
-            o = self.linear() # [FIX]
+            # compute output logits for next timestep; use padding labels if no more encoder timesteps:
+            if (k < num_enc_steps):
+                enc_steps_avail = encoded_pad[:,:,k:(self.receptive_field+k)]
+            else:
+                enc_steps_avail = encoded_pad.new(batch_size, self.encoding_dim, self.receptive_field).fill_(self.pad_label)
+            o = self.linear(torch.autograd.Variable(label_buffer), torch.autograd.Variable(enc_steps_avail))
             
             # append to outputs:
-            output_buffer.append(o) # [FIX]
+            output_buffer.append(o)
 
             # compute argmax:
-            ixs, vals = torch.max() # [FIX]
+            _, next_label = torch.max(o, dim=1)
             
-            # quit if stop labels observed in all positions:
-            if (ixs.data == self.stop_label).sum() == batch_size: pass # [FIX]
+            # update output_lengths:
+            stop_mask = torch.eq(next_label.data, self.stop_label).float()
+            output_lengths[:,0].add_(stop_mask).clamp_(max=1) # (flip 'stop' flag)
+            output_lengths[:,1].add_(1).sub_(output_lengths[:,0]) # (incr. step-count)
+            if torch.eq(output_lengths[:,0],1).all(): break # (end loop if finished)
             
             # shift buffer by 1 step, accommodating the new output:
-            label_buffer[:,:,:-1] = label_buffer[:,:,1:].clone()
-            label_buffer[:,:,-1] = o
+            label_buffer[:,:-1] = label_buffer[:,1:].clone()
+            label_buffer[:,-1] = next_label.data
 
-        # return output steps:
-        return torch.cat(output_buffer, dim=2)
+        # return output steps and sequence lengths:
+        return torch.stack(output_buffer, dim=2), torch.autograd.Variable(output_lengths[:,1].int())

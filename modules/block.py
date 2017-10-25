@@ -203,23 +203,19 @@ class MultiplicativeUnit(nn.Module):
         super(MultiplicativeUnit, self).__init__()
         self.ndim = ndim
         self.gate1 = CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation)
-        self.ln1 = LayerNorm(ndim, dim=1)
         self.gate2 = CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation)
-        self.ln2 = LayerNorm(ndim, dim=1)
         self.gate3 = CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation)
-        self.ln3 = LayerNorm(ndim, dim=1)
         self.update = CausalConv1d(ndim, ndim, kernel_width=k, dilation=dilation)
-        self.lnu = LayerNorm(ndim, dim=1)
         self.init() # initialize parameters
 
         self.receptive_field = max([self.gate1.receptive_field, self.gate2.receptive_field,
                                     self.gate3.receptive_field, self.update.receptive_field])
 
     def forward(self, h):
-        g1 = F.sigmoid(self.ln1(self.gate1(h)))
-        g2 = F.sigmoid(self.ln2(self.gate2(h)))
-        g3 = F.sigmoid(self.ln3(self.gate3(h)))
-        u = F.tanh(self.lnu(self.update(h)))
+        g1 = F.sigmoid(self.gate1(h))
+        g2 = F.sigmoid(self.gate2(h))
+        g3 = F.sigmoid(self.gate3(h))
+        u = F.tanh(self.update(h))
         # g1 * tanh( g2 * h + g3 * u ):
         return (g1.mul(F.tanh(g2.mul(h) + g3.mul(u))))
 

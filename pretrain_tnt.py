@@ -32,7 +32,7 @@ import argparse
 import itertools
 
 ### helper functions to reshape to/from model<->loss.
-# N.B.: Both of these functions onnly accepts `Variable` type so that gradients are preserved.
+# N.B.: Both of these functions only accepts `Variable` type so that gradients are preserved.
 def to_concat(labels_batch, lengths):
     """Concatenate together, excluding the padding values."""
     concat_seqs = []
@@ -65,7 +65,7 @@ class RawSignalDataset(object):
         self._niterations = cfg['epoch_size']
         self.kmer_model = "./utils/r9.4_450bps.5mer.template.npz"
         self.reference_hdf_path = "./utils/r9.4_450bps.5mer.ecoli.model/reference.hdf5"
-        self.read_length_model = (90,100) # or "./utils/r9.4_450bps.5mer.ecoli.model/read_lengths.npy"
+        self.read_length_model = (10,20) # or "./utils/r9.4_450bps.5mer.ecoli.model/read_lengths.npy"
         self.sample_rate = 800.
         self.batch_size = cfg['batch_size']
         self._dataset = RawSignalGenerator(self.kmer_model, self.reference_hdf_path, self.read_length_model,
@@ -82,26 +82,31 @@ class RawSignalDataset(object):
 
 
 ### main training loop; use visdom logging:
-def main(cfg):
+def main(cfg, cuda=torch.cuda.is_available()):
     #-- construct dataset loader:
     def get_iterator():
         return RawSignalDataset(cfg)
     
-    #-- construct model:
-    num_features = 512
+    #-- construct model: [TODO: 32=>512, 16=>256]
+    num_features = 32
     feature_kwidth = 3
-    encoder_dim = 512
-    enc_layers = [(512,512,d,2) for d in [1,2,4,8,16]] * 5 + [(512,512,d,3) for d in [1,2,4,8,16]] * 5
-    enc_out_dim = 512
-    num_labels = 5
-    dec_channels = 512
-    dec_kwidth = 3
-    dec_out_dim = 256
+    encoder_dim = 32
+    enc_layers = [(32,32,d,2) for d in [1,2,4,8,16]] * 5
+    enc_out_dim = 32
+    num_labels = 7
+    dec_channels = 32
+    dec_out_dim = 16
     dec_layers = [(3,d) for d in [1,2,4,8,16]] * 5
+    max_time = 40
     encoder = RawCTCNet(num_features, feature_kwidth, encoder_dim, enc_layers, enc_out_dim,
                         input_kernel_size=2, input_dilation=1, positions=False, softmax=False, causal=False)
-    #decoder = ByteNetDecoder(num_labels, encoder_dim, dec_channels, dec_kwidth, dec_out_dim, dec_layers, block='mult')
+    decoder = ByteNetDecoder(num_labels, encoder_dim, dec_channels, dec_out_dim, dec_layers, block='mult',
+                             pad=0, start=5, stop=6, max_timesteps=max_time)
     print("Constructed model.")
+    if cuda:
+        encoder.cuda()
+        decoder.cuda()
+        print("CUDA detected... Placed encoder and decoder on GPU memory.")
 
     #-- loss function & computation:
     ctc_loss_fn = CTCLoss()
@@ -109,33 +114,26 @@ def main(cfg):
     def model_loss(sample):
         # unpack inputs:
         signals, sequences, signal_lengths, sequence_lengths = sample
-        """ # TODO: fix decoder to allow for arbitrary sequential timesteps
+        if cuda: signals = signals.cuda()
         # get encodings from RawCTCNet:
         encoded_seq = encoder(signals.unsqueeze(1))
-        # compute next-step prediction via bytenet decoder:
-        next_timestep_preds = decoder(sequences[:,0:-1], encoded_seq[:,:,0:(sequences.size(1)-1)]) # [ISSUE HERE: size constraint]
-        """
-        next_timestep_preds = encoder(signals.unsqueeze(1))
+        # decode sequence into nucleotides via bytenet decoder:
+        decoded_seq, decoded_lengths = decoder(encoded_seq)
         # compute CTC loss and return:
-        transcriptions = next_timestep_preds.permute(2,0,1) # [B,C,S=>S,B,C]
-        transcription_lengths = Variable(torch.IntTensor([transcriptions.size(0)] * transcriptions.size(1)))
+        transcriptions = decoded_seq.permute(2,0,1).cpu() # reshape(B,C,S->S,B,C)
         label_lengths = sequence_lengths.int()
         labels = to_concat(sequences, label_lengths).int()
-        #transcription_lengths = (signal_lengths.int() - 1)
-        #label_lengths = (sequence_lengths.int() - 1)
-        #labels = to_concat(sequences[1:signals.size(1)+1], label_lengths)
-        loss = ctc_loss_fn(transcriptions, labels, transcription_lengths, label_lengths)
+        loss = ctc_loss_fn(transcriptions, labels, decoded_lengths, label_lengths)
         return loss, transcriptions
     
     #-- optimizer:
-    #opt = optim.Adamax([{"params": encoder.parameters()},
-    #                    {"params": decoder.parameters()}],
-    #                   lr=0.002)
-    opt = optim.Adamax(encoder.parameters(), lr=0.002)
+    opt = optim.Adamax([{"params": encoder.parameters()},
+                        {"params": decoder.parameters()}],
+                       lr=0.002)
     print("Constructed optimizer.")
     
-    #-- beam search:
-    beam_search = BeamSearchDecoder(cfg['batch_size'], num_labels, beam_width=6)
+    #-- beam search: [TODO: fix this to make START/STOP/PAD optional]
+    beam_search = BeamSearchDecoder(cfg['batch_size'], num_labels, beam_width=6, cuda=cuda)
     print("Constructed beam search decoder.")
 
     #-- engine, meters, loggers:
