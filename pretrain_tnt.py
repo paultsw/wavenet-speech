@@ -120,10 +120,10 @@ def main(cfg, cuda=torch.cuda.is_available()):
         # decode sequence into nucleotides via bytenet decoder:
         decoded_seq, decoded_lengths = decoder(encoded_seq)
         # compute CTC loss and return:
-        transcriptions = decoded_seq.permute(2,0,1).cpu() # reshape(B,C,S->S,B,C)
+        transcriptions = decoded_seq.permute(2,0,1) # reshape(B,C,S->S,B,C)
         label_lengths = sequence_lengths.int()
         labels = to_concat(sequences, label_lengths).int()
-        loss = ctc_loss_fn(transcriptions, labels, decoded_lengths, label_lengths)
+        loss = ctc_loss_fn(transcriptions.cpu(), labels.cpu(), decoded_lengths.cpu(), label_lengths.cpu())
         return loss, transcriptions
     
     #-- optimizer:
