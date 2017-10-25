@@ -162,8 +162,7 @@ class ByteNetDecoder(nn.Module):
         # loop until finish:
         output_buffer = []
         num_enc_steps = encoded_seq.size(2)
-        output_lengths = torch.zeros(batch_size,2) # [:,0] ~ lengths; [:,1] ~ finished
-        if encoded_seq.is_cuda: output_lengths.cuda()
+        output_lengths = encoded_seq.new(batch_size,2).zero_() # [:,0] ~ lengths; [:,1] ~ finished
         for k in range(self.max_timesteps):
             # compute output logits for next timestep; use padding labels if no more encoder timesteps:
             if (k < num_enc_steps):
