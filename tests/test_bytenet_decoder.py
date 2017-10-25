@@ -69,7 +69,7 @@ for k in range(num_iterations):
     optimizer.zero_grad()
     out_seq, out_lengths = decoder(encoding_seq) # out_seq ~ BCS
     transcription = out_seq.permute(2,0,1).cpu() # reshape BCS => SBC
-    loss = loss_fn(transcription, target_seq, out_lengths, target_seq_length)
+    loss = loss_fn(transcription, target_seq.cpu(), out_lengths.cpu(), target_seq_length.cpu())
     loss.backward()
     if k % print_every == 0: print("Step {0} Loss: {1}".format(k,loss.data[0]))
     if loss.data[0] < 1.0: break
