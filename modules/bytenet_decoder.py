@@ -162,7 +162,7 @@ class ByteNetDecoder(nn.Module):
         # loop until finish:
         output_buffer = []
         num_enc_steps = encoded_seq.size(2)
-        output_lengths = encoded_seq.new(batch_size,2).zero_() # [:,0] ~ lengths; [:,1] ~ finished
+        output_lengths = encoded_seq.data.new(batch_size,2).zero_() # [:,0] ~ lengths; [:,1] ~ finished
         for k in range(self.max_timesteps):
             # compute output logits for next timestep; use padding labels if no more encoder timesteps:
             if (k < num_enc_steps):
