@@ -29,4 +29,4 @@ class LayerNorm(nn.Module):
 
     def cuda(self):
         self.gamma = nn.Parameter(self.gamma.data.cuda())
-        self.beta = nn.Parameter(self.beta.data.cuda())
+        self.beta = nn.Parameter(self.beta.data.cuda()
