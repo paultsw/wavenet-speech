@@ -28,5 +28,6 @@ class LayerNorm(nn.Module):
         return self.gamma.expand_as(x) * (x - mean) / (std + self.eps) + self.beta.expand_as(x)
 
     def cuda(self):
+        print("inside layernorm cuda!")
         self.gamma = nn.Parameter(self.gamma.data.cuda())
         self.beta = nn.Parameter(self.beta.data.cuda())
