@@ -28,7 +28,6 @@ stop_label = 6
 ### construct  bytenet decoder:
 decoder = ByteNetDecoder(num_labels, encoding_dim, num_channels, output_dim, layers, block=blocktype,
                          pad=pad_label, start=start_label, stop=stop_label, max_timesteps=max_steps)
-if _CUDA_: decoder.cuda()
 
 ### evaluate on random input/encoding timesteps:
 inp_frames = Variable(torch.randn(batch_size, decoder.receptive_field).mul(num_labels).clamp(0,num_labels-1).long())
@@ -44,7 +43,6 @@ print(out_frame) # [Comment/Un-Comment this as necessary]
 ### evaluate on forward loop:
 encoder_seq_length = 50
 encoder_seq = Variable(torch.randn(batch_size, encoding_dim, encoder_seq_length))
-if _CUDA_: encoder_seq = encoder_seq.cuda()
 out_seq, out_lengths = decoder(encoder_seq)
 print("Encoded sequence size: {}".format(encoder_seq.size()))
 print("Output sequence size: {}".format(out_seq.size()))
@@ -55,6 +53,7 @@ print(out_lengths)
 ### try to overfit on constant sequence (linearly increasing, batch size == 1):
 print("Attempting to learn a basic monotonically increasing sequence...")
 input("[ENTER to begin]")
+if _CUDA_: decoder.cuda()
 incr_ = torch.IntTensor(([1,2,3,4] * 5) + [6]).view(1,-1)
 target_seq = Variable(incr_)
 target_seq_length = Variable(torch.IntTensor([target_seq.size(1)])) # (num target timesteps + <STOP>)
