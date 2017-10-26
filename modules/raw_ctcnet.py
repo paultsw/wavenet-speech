@@ -129,7 +129,9 @@ class RawCTCNet(nn.Module):
 
         # optionally mix position information:
         if self.positions:
-            frame_positions = Variable(seq.data.new(torch.arange(0., out.size(2))))
+            incr_ = torch.arange(0., out.size(2))
+            if seq.is_cuda: incr_ = incr_.cuda()
+            frame_positions = Variable(incr_)
             out = out + self.positions_conv1x1(frame_positions.unsqueeze(0).unsqueeze(1))
         
         # pass thru the input layer block:
