@@ -12,7 +12,7 @@ from torch.autograd import Variable
 
 class StackedLSTMCell(nn.Module):
     """
-    A looping LSTM cell with many layers.
+    A looping stack of LSTM cells, with FC()=>ELU() linking between them.
     
     Between each layer, we have a fully-connected [hidden_dim=>hidden_dim] layer that transforms the
     hidden state into the input for the next layer.
@@ -28,7 +28,19 @@ class StackedLSTMCell(nn.Module):
         self.num_layers = num_layers
         # construct modules:
         self.lstm_cells = nn.ModuleList([nn.LSTMCell(hidden_dim, hidden_dim) for _ in range(num_layers)])
-        self.fc_layers = nn.ModuleList([nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.Tanh()) for _ in range(num_layers)])
+        self.fc_layers = nn.ModuleList([nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ELU()) for _ in range(num_layers)])
+        # initialize sensibly:
+        for p in self.lstm_cells.parameters():
+            if len(p.size()) > 1: 
+                nn.init.xavier_normal(p)
+            else:
+                p.data.zero_().add(torch.randn(p.size()).mul(0.001))
+        for p in self.fc_layers.parameters():
+            if len(p.size()) > 1: 
+                nn.init.xavier_normal(p)
+            else:
+                p.data.zero_().add(torch.randn(p.size()).mul(0.001))
+
 
     def forward(self, x, h0s, c0s):
         """
@@ -101,7 +113,7 @@ class RNNByteNetDecoder(nn.Module):
         # encoding layer: mix input and encoding together with FC:
         self.encoder_layer = nn.Sequential(
             nn.Linear(encoding_dim, encoding_dim),
-            nn.Tanh(),
+            nn.ELU(),
             nn.Linear(encoding_dim, hidden_dim))
 
         # stack of inner LSTM cells:
@@ -110,8 +122,26 @@ class RNNByteNetDecoder(nn.Module):
         # output FC layer:
         self.output_layer = nn.Sequential(
             nn.Linear(hidden_dim, out_dim),
-            nn.Tanh(),
+            nn.ELU(),
             nn.Linear(out_dim, num_labels))
+
+        # perform initializations:
+        # [don't init `self.lstm_stack`; already done above]
+        for p in self.input_layer.parameters():
+            if (len(p.size()) > 1):
+                nn.init.xavier_normal(p)
+            else:
+                p.data.zero_().add(torch.randn(p.size()).mul(0.0001))
+        for p in self.encoder_layer.parameters():
+            if (len(p.size()) > 1):
+                nn.init.xavier_normal(p)
+            else:
+                p.data.zero_().add(torch.randn(p.size()).mul(0.0001))
+        for p in self.output_layer.parameters():
+            if (len(p.size()) > 1):
+                nn.init.xavier_normal(p)
+            else:
+                p.data.zero_().add(torch.randn(p.size()).mul(0.0001))
 
 
     def forward(self, x0, hvals, cvals, enc_step):
@@ -154,10 +184,10 @@ class RNNByteNetDecoder(nn.Module):
         # formatting, etc.:
         enc = encoding_seq.permute(2,0,1) # ~ reshape => (seq x batch x encoding_dim)
         batch_size = enc.size(1)
-        out = Variable(torch.LongTensor([self.start_label] * batch_size)) # ~ (batch_size,) Long of <START>s
+        out = Variable(make_longtensor([self.start_label] * batch_size, cuda=enc.is_cuda)) # ~ (batch_size,) Long of <START>s
         shape = torch.Size([batch_size, self.hidden_dim]) # ~ (batch x hidden)
-        hvals = [Variable(enc.data.new(shape).zero_().add_(torch.randn(shape)).mul_(0.001)) for _ in range(self.num_layers)]
-        cvals = [Variable(enc.data.new(shape).zero_().add_(torch.randn(shape)).mul_(0.001)) for _ in range(self.num_layers)]
+        hvals = [Variable(make_randn(shape, cuda=enc.is_cuda)) for _ in range(self.num_layers)]
+        cvals = [Variable(make_randn(shape, cuda=enc.is_cuda)) for _ in range(self.num_layers)]
         num_enc_steps = enc.size(0)
         logits_seq = []
         output_lengths = enc.data.new(batch_size,2).zero_() # [:,0] ~ lengths; [:,1] ~ finished
@@ -182,3 +212,19 @@ class RNNByteNetDecoder(nn.Module):
             if torch.eq(output_lengths[:,0],1).all(): break
 
         return ( torch.stack(logits_seq, dim=0), torch.autograd.Variable(output_lengths[:,1].int()) )
+
+
+### HELPER FUNCTIONS
+def make_longtensor(val, cuda=False):
+    """Construct longtensor on either CUDA or CPU."""
+    if cuda:
+        return torch.cuda.LongTensor(val)
+    else:
+        return torch.LongTensor(val)
+
+def make_randn(shape, cuda=False):
+    """Construct a small random value of some shape, either on CUDA or CPU."""
+    if cuda:
+        return torch.randn(shape).mul_(0.001).cuda()
+    else:
+        return torch.randn(shape).mul_(0.001)
