@@ -19,7 +19,6 @@ import torch.optim as optim
 from warpctc_pytorch import CTCLoss
 # custom modules/datasets:
 from modules.raw_ctcnet import RawCTCNet
-from modules.bytenet_decoder import ByteNetDecoder
 from modules.rnn_decoder import RNNByteNetDecoder
 from modules.sequence_decoders import argmax_decode, BeamSearchDecoder, labels2strings
 from utils.raw_signal_generator import RawSignalGenerator
@@ -89,86 +88,52 @@ def main(cfg, cuda=torch.cuda.is_available()):
         return RawSignalDataset(cfg)
     
     # Construct encoder-decoder architecture:
-    if (cfg['model_type'] == 'EncDec'):
-        #-- construct EncDec model: deep encoder with shallow decoder
-        print("Constructing encoder-decoder model...")
-        num_features = 512
-        feature_kwidth = 3
-        encoder_dim = 512
-        enc_layers = [(512,512,d,2) for d in [1,2,4,8,16]] * 5
-        enc_out_dim = 512
-        num_labels = 7
-        dec_channels = 32
-        dec_out_dim = 32
-        dec_layers = [(3,d) for d in [1,2,4,8,16]]
-        max_time = 40
-        encoder = RawCTCNet(num_features, feature_kwidth, encoder_dim, enc_layers, enc_out_dim,
-                            input_kernel_size=2, input_dilation=1, positions=False, softmax=False, causal=False)
-        decoder = ByteNetDecoder(num_labels, encoder_dim, dec_channels, dec_out_dim, dec_layers, block='mult',
-                                 pad=0, start=5, stop=6, max_timesteps=max_time)
-        print("Constructed model.")
-        if cuda:
-            encoder.cuda()
-            decoder.cuda()
-            print("CUDA detected... Placed encoder and decoder on GPU memory.")
-    # Encoder-only architecture via RawCTCNet, with positional embeddings and kernel-width == 3:
-    if (cfg['model_type'] == 'PosEnc'):
-        print("Constructing encoder model with positional embeddings...")
-        num_features = 512
-        feature_kwidth = 3
-        layers = [(512,512,d,3) for d in [1,2,4,8,16,32]] * 5
-        num_labels = 5
-        out_dim = 1024
-        encoder = RawCTCNet(num_features, feature_kwidth, num_labels, layers, out_dim,
-                            input_kernel_size=2, input_dilation=1,
-                            positions=True, softmax=False, causal=False)
-        if cuda:
-            encoder.cuda()
-            print("CUDA detected... Placed encoder on GPU memory.")
+    print("Constructing encoder-decoder model...")
+    num_features = 512
+    feature_kwidth = 3
+    encoder_dim = 512
+    enc_layers = [(512,512,d,2) for d in [1,2,4,8,16]] * 5
+    enc_out_dim = 512
+    num_labels = 7
+    dec_hdim = 32
+    dec_out_dim = 32
+    dec_layers = 5
+    max_time = 40
+    encoder = RawCTCNet(num_features, feature_kwidth, encoder_dim, enc_layers, enc_out_dim,
+                        input_kernel_size=2, input_dilation=1, positions=False, softmax=False, causal=False)
+    decoder = RNNByteNetDecoder(num_labels, encoder_dim, dec_hdim, dec_out_dim, dec_layers,
+                                pad=0, start=5, stop=6, max_timesteps=max_time)
+    print("Constructed model.")
+    if cuda:
+        encoder.cuda()
+        decoder.cuda()
+        print("CUDA detected... Placed encoder and decoder on GPU memory.")
 
     #-- loss function & computation:
     ctc_loss_fn = CTCLoss()
     print("Constructed loss function.")
-    if (cfg['model_type'] == 'EncDec'):
-        def model_loss(sample):
-            # unpack inputs:
-            signals, sequences, signal_lengths, sequence_lengths = sample
-            if cuda: signals = signals.cuda()
-            # get encodings from RawCTCNet:
-            encoded_seq = encoder(signals.unsqueeze(1))
-            # decode sequence into nucleotides via bytenet decoder:
-            decoded_seq, decoded_lengths = decoder(encoded_seq)
-            # compute CTC loss and return:
-            transcriptions = decoded_seq.permute(2,0,1) # reshape(B,C,S->S,B,C)
-            label_lengths = sequence_lengths.int()
-            labels = to_concat(sequences, label_lengths).int()
-            loss = ctc_loss_fn(transcriptions.cpu(), labels.cpu(), decoded_lengths.cpu(), label_lengths.cpu())
-            return loss, transcriptions
-    if (cfg['model_type'] == 'PosEnc'):
-        def model_loss(sample):
-            # unpack inputs:
-            signals, sequences, signal_lengths, sequence_lengths = sample
-            if cuda: signals = signals.cuda()
-            # get encodings from RawCTCNet:
-            out_seq = encoder(signals.unsqueeze(1))
-            # compute CTC loss and return:
-            transcriptions = out_seq.permute(2,0,1) # reshape(B,C,S->S,B,C)
-            out_lengths = Variable(torch.IntTensor([transcriptions.size(0)]*transcriptions.size(1)))
-            label_lengths = sequence_lengths.int()
-            labels = to_concat(sequences, label_lengths).int()
-            loss = ctc_loss_fn(transcriptions.cpu(), labels.cpu(), out_lengths.cpu(), label_lengths.cpu())
-            return loss, transcriptions
+    def model_loss(sample):
+        # unpack inputs:
+        signals, sequences, signal_lengths, sequence_lengths = sample
+        if cuda: signals = signals.cuda()
+        # get encodings from RawCTCNet:
+        encoded_seq = encoder(signals.unsqueeze(1))
+        # decode sequence into nucleotides via bytenet decoder:
+        decoded_seq, decoded_lengths = decoder.unfold(encoded_seq)
+        # compute CTC loss and return:
+        transcriptions = decoded_seq.cpu()
+        transcription_lengths = decoded_seq.cpu()
+        label_lengths = sequence_lengths.int().cpu()
+        labels = to_concat(sequences, label_lengths).int().cpu()
+        loss = ctc_loss_fn(transcriptions, labels, transcription_lengths, label_lengths)
+        return loss, transcriptions
     
     #-- optimizer:
-    if (cfg['model_type'] == 'EncDec'):
-        opt = optim.Adamax([{"params": encoder.parameters()},
-                            {"params": decoder.parameters()}],
-                           lr=0.002)
-        print("Constructed optimizer.")
-    if (cfg['model_type'] == 'PosEnc'):
-        opt = optim.Adamax(encoder.parameters(), lr=0.002)
-        print("Constructed optimizer.")
-    
+    opt = optim.Adamax([{"params": encoder.parameters()},
+                        {"params": decoder.parameters()}],
+                       lr=0.002)
+    print("Constructed optimizer.")
+
     #-- beam search: [TODO: fix this to make START/STOP/PAD optional]
     beam_search = BeamSearchDecoder(cfg['batch_size'], num_labels, beam_width=6, cuda=cuda)
     print("Constructed beam search decoder.")
@@ -232,14 +197,11 @@ if __name__ == '__main__':
     parser.add_argument("--epoch_size", dest='epoch_size', default=10000, help="Number of steps per epoch")
     parser.add_argument("--print_every", dest='print_every', default=25, help="Log the loss to stdout every N steps.")
     parser.add_argument("--batch_size", dest='batch_size', default=8, help="Number of sequences per batch")
-    parser.add_argument("--model_type", dest='model_type', choices=('PosEnc', 'EncDec'),
-                        default='PosEnc', help="Type of model to train")
     args = parser.parse_args()
     cfg = {
         'max_epochs': args.max_epochs,
         'epoch_size': args.epoch_size,
         'batch_size': args.batch_size,
-        'print_every': args.print_every,
-        'model_type': args.model_type
+        'print_every': args.print_every
     }
     main(cfg)
