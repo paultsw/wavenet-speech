@@ -49,7 +49,7 @@ def to_stack(labels_concat, lengths):
         seq = labels_concat[curr:(curr+lengths.data[k])]
         pad_amt = max_length-lengths.data[k]
         if pad_amt > 0:
-            zero_pad_var = Variable(torch.zeros(pad_amt).long())
+            zero_pad_var = Variable(torch.zeros(pad_amt).long(), requires_grads=False)
             padded_seq = torch.cat((seq, zero_pad_var),dim=0)
         else:
             padded_seq = seq
