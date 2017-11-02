@@ -150,7 +150,7 @@ class RawSignalGenerator(object):
         ### return as torch.autograd.Variable on CPU:
         outs = (torch.autograd.Variable(signal),
                 torch.autograd.Variable(seq, requires_grad=False),
-                torch.autograd.Variable(sig_lengths_th),
+                torch.autograd.Variable(sig_lengths_th, requires_grad=False),
                 torch.autograd.Variable(seq_lengths_th, requires_grad=False))
         return outs
 
