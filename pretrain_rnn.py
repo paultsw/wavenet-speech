@@ -95,9 +95,9 @@ def main(cfg, cuda=torch.cuda.is_available()):
     enc_layers = [(512,512,d,2) for d in [1,2,4,8,16]] * 5
     enc_out_dim = 512
     num_labels = 7
-    dec_hdim = 256
-    dec_out_dim = 512
-    dec_layers = 7
+    dec_hdim = 512
+    dec_out_dim = 1024
+    dec_layers = 5
     max_time = 40
     encoder = RawCTCNet(num_features, feature_kwidth, encoder_dim, enc_layers, enc_out_dim,
                         input_kernel_size=2, input_dilation=1, positions=False, softmax=False, causal=False)
@@ -130,9 +130,8 @@ def main(cfg, cuda=torch.cuda.is_available()):
         return avg_loss, transcriptions
     
     #-- optimizer:
-    opt = optim.Adamax([{"params": encoder.parameters()},
-                        {"params": decoder.parameters()}],
-                       lr=0.002)
+    opt = optim.Adamax([{"params": encoder.parameters(), 'lr': 0.002},
+                        {"params": decoder.parameters(), 'lr': 0.0001}])
     print("Constructed optimizer.")
 
     #-- beam search: [TODO: fix this to make START/STOP/PAD optional]
