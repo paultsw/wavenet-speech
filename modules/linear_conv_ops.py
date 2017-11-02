@@ -21,7 +21,8 @@ class LinearConv1d(nn.Conv1d):
     """
     Same interface/usage as nn.Conv1d, but adds optional an optional `linear()` method.
     Calls to `linear()` uses the parameters of the Conv1d as the weights to a linear
-    feedforward layer.
+    feedforward layer. Calls to `forward()` loop the `linear()` function over as many
+    frames of the input sequence as a standard nn.Conv1d would.
     """
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True):
         # run parent constructor with same parameters:
@@ -29,6 +30,11 @@ class LinearConv1d(nn.Conv1d):
                                           padding, dilation, groups, bias)
         # internal value that determines which steps to keep per frame, taking dilation into account:
         self._ker_ixs = get_ker_ixs(dilation, kernel_size)
+
+    def forward(self, in_seq):
+        """Loop over calls to `linear()` method; returns the same output as `nn.Conv1d.forward()`."""
+        start_ix = None # [CALCULATE FROM PAD/STRIDE]
+        stop_ix = None # [CALCULATE FROM PAD/STRIDE]
 
     def linear(self, frame, keep_dims=False):
         """
@@ -65,92 +71,6 @@ class LinearConv1d(nn.Conv1d):
     def receptive_field(self):
         """Determines the number of timesteps needed before we can output a single frame in `linear()`."""
         return ( self.kernel_size[0] + (self.dilation[0]-1)*(self.kernel_size[0]-1) )
-
-
-### Linear, causal:
-class LinearCausalConv1d(nn.Module):
-    """
-    Define a causal Conv1d as a special Conv1d that shifts the outputs
-    by a certain amount.
-
-    This module preserves temporal resolution (i.e. the number of timesteps
-    in the input and output sequences is invariant).
-    """
-    def __init__(self, in_channels, out_channels, kernel_width, dilation=1):
-        """Create underlying causal convolution."""
-        # run parent initialization:
-        super(LinearCausalConv1d, self).__init__()
-        
-        # save arguments as attributes:
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_width = kernel_width
-        self.dilation = dilation
-        # amount to pad/shift by; ensures that `self.padding` elements left at end,
-        # which we can safely ignore when computing forward pass
-        self.padding = (kernel_width-1)*dilation
-
-        # single conv1d as submodule:
-        self.conv1d = LinearConv1d(
-            in_channels, out_channels, kernel_width, stride=1,
-            padding=self.padding,
-            dilation=dilation)
-
-    def forward(self, seq):
-        """
-        Forward pass through the internal conv1d and removes the last `self.padding` elements.
-        """
-        conv1d_out = self.conv1d(seq)
-        return conv1d_out[:,:,0:seq.size(2)]
-
-    def linear(self, frame, keep_dims=False):
-        """Call the linearized version of the underlying parameters."""
-        return self.conv1d.linear(frame, keep_dims=keep_dims)
-
-    @property
-    def receptive_field(self):
-        return self.conv1d.receptive_field
-
-
-### Linear, Non-causal:
-class LinearNonCausalConv1d(nn.Module):
-    """
-    An automatically-padded Conv1d.
-    """
-    def __init__(self, in_channels, out_channels, kernel_width, dilation=1):
-        """Create an auto-padded conv1d."""
-        # run parent initialization:
-        super(LinearNonCausalConv1d, self).__init__()
-
-        # save arguments as attributes:
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_width = kernel_width
-        self.dilation = dilation
-        # amount to pad/shift by:
-        self.padding = autopad(kernel_width, dilation)
-
-        # single conv1d as submodule:
-        self.conv1d = LinearConv1d(
-            in_channels, out_channels, kernel_width, stride=1,
-            padding=self.padding,
-            dilation=dilation)
-
-    def forward(self, seq):
-        """
-        Forward pass through the internal conv1d; slice off the same dimension as the original
-        sequence length to preserve temporal resolution.
-        """
-        conv1d_out = self.conv1d(seq)
-        return conv1d_out[:,:,0:seq.size(2)]
-
-    def linear(self, frame, keep_dims=False):
-        """Call the linearized version of the underlying parameters."""
-        return self.conv1d.linear(frame, keep_dims=keep_dims)
-
-    @property
-    def receptive_field(self):
-        return self.conv1d.receptive_field
 
 # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
 # Helper Functions
