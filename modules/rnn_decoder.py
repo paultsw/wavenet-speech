@@ -179,7 +179,7 @@ class RNNByteNetDecoder(nn.Module):
 
         Returns: a tuple (outs, lengths) where:
         * outs: a FloatTensor Variable of shape (seq, batch_size, num_labels);
-        * lengths: an IntTensor Variable of shape (batch_size) indicating the length of each sequence.
+        * lengths: an IntTensor of shape (batch_size) indicating the length of each sequence. (NOT Variable.)
         """
         # formatting, etc.:
         enc = encoding_seq.permute(2,0,1) # ~ reshape => (seq x batch x encoding_dim)
@@ -211,7 +211,7 @@ class RNNByteNetDecoder(nn.Module):
             # quit if all finished early:
             if torch.eq(output_lengths[:,0],1).all(): break
 
-        return ( torch.stack(logits_seq, dim=0), torch.autograd.Variable(output_lengths[:,1].int()) )
+        return ( torch.stack(logits_seq, dim=0), output_lengths[:,1].int() )
 
 
 ### HELPER FUNCTIONS

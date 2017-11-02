@@ -122,7 +122,7 @@ def main(cfg, cuda=torch.cuda.is_available()):
         decoded_seq, decoded_lengths = decoder.unfold(encoded_seq)
         # compute CTC loss and return:
         transcriptions = decoded_seq.cpu()
-        transcription_lengths = decoded_seq.cpu()
+        transcription_lengths = Variable(decoded_lengths, requires_grad=False).cpu()
         label_lengths = sequence_lengths.int().cpu()
         labels = to_concat(sequences, label_lengths).int().cpu()
         loss = ctc_loss_fn(transcriptions, labels, transcription_lengths, label_lengths)
