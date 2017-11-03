@@ -13,7 +13,7 @@ from torch.autograd import Variable
 class StackedLSTMCell(nn.Module):
     """
     A looping stack of LSTM cells, with FC()=>ELU() linking between them, as well as both residual
-    connections that additively hop over each RNN block, and additive skip-connections to final output.
+    connections that additively hop over each RNN block.
     
     Between each layer, we have a fully-connected [hidden_dim=>hidden_dim] layer that transforms the
     hidden state into the input for the next layer.

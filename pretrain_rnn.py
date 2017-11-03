@@ -65,7 +65,7 @@ class RawSignalDataset(object):
         self._niterations = cfg['epoch_size']
         self.kmer_model = "./utils/r9.4_450bps.5mer.template.npz"
         self.reference_hdf_path = "./utils/r9.4_450bps.5mer.ecoli.model/reference.hdf5"
-        self.read_length_model = (10,20) # or "./utils/r9.4_450bps.5mer.ecoli.model/read_lengths.npy"
+        self.read_length_model = (20,30) # or "./utils/r9.4_450bps.5mer.ecoli.model/read_lengths.npy"
         self.sample_rate = 800.
         self.batch_size = cfg['batch_size']
         self._dataset = RawSignalGenerator(self.kmer_model, self.reference_hdf_path, self.read_length_model,
@@ -98,7 +98,7 @@ def main(cfg, cuda=torch.cuda.is_available()):
     dec_hdim = 512
     dec_out_dim = 1024
     dec_layers = 5
-    max_time = 40
+    max_time = 100
     encoder = RawCTCNet(num_features, feature_kwidth, encoder_dim, enc_layers, enc_out_dim,
                         input_kernel_size=2, input_dilation=1, positions=False, softmax=False, causal=False)
     decoder = RNNByteNetDecoder(num_labels, encoder_dim, dec_hdim, dec_out_dim, dec_layers,
@@ -130,8 +130,8 @@ def main(cfg, cuda=torch.cuda.is_available()):
         return avg_loss, transcriptions
     
     #-- optimizer:
-    opt = optim.Adamax([{"params": encoder.parameters(), 'lr': 0.002},
-                        {"params": decoder.parameters(), 'lr': 0.0001}])
+    opt = optim.Adadelta([{'params': encoder.parameters(), 'lr': 0.002},
+                          {'params': decoder.parameters(), 'lr': 0.0001}])
     print("Constructed optimizer.")
 
     #-- beam search: [TODO: fix this to make START/STOP/PAD optional]
@@ -193,10 +193,10 @@ def main(cfg, cuda=torch.cuda.is_available()):
 if __name__ == '__main__':
     # read config and run main():
     parser = argparse.ArgumentParser(description="Train an encoder-decoder model on realistically-modelled data.")
-    parser.add_argument("--max_epochs", dest='max_epochs', default=100, help="Number of epochs")
-    parser.add_argument("--epoch_size", dest='epoch_size', default=10000, help="Number of steps per epoch")
-    parser.add_argument("--print_every", dest='print_every', default=25, help="Log the loss to stdout every N steps.")
-    parser.add_argument("--batch_size", dest='batch_size', default=8, help="Number of sequences per batch")
+    parser.add_argument("--max_epochs", dest='max_epochs', type=int, default=100, help="Number of epochs")
+    parser.add_argument("--epoch_size", dest='epoch_size', type=int, default=10000, help="Number of steps per epoch")
+    parser.add_argument("--print_every", dest='print_every', type=int, default=25, help="Log the loss to stdout every N steps.")
+    parser.add_argument("--batch_size", dest='batch_size', type=int, default=8, help="Number of sequences per batch")
     args = parser.parse_args()
     cfg = {
         'max_epochs': args.max_epochs,
