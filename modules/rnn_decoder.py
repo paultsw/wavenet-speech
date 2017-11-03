@@ -12,7 +12,8 @@ from torch.autograd import Variable
 
 class StackedLSTMCell(nn.Module):
     """
-    A looping stack of LSTM cells, with FC()=>ELU() linking between them.
+    A looping stack of LSTM cells, with FC()=>ELU() linking between them, as well as both residual
+    connections that additively hop over each RNN block, and additive skip-connections to final output.
     
     Between each layer, we have a fully-connected [hidden_dim=>hidden_dim] layer that transforms the
     hidden state into the input for the next layer.
@@ -29,6 +30,7 @@ class StackedLSTMCell(nn.Module):
         # construct modules:
         self.lstm_cells = nn.ModuleList([nn.LSTMCell(hidden_dim, hidden_dim) for _ in range(num_layers)])
         self.fc_layers = nn.ModuleList([nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.ELU()) for _ in range(num_layers)])
+        self.skip_layers = nn.ModuleList([nn.Linear(hidden_dim,hidden_dim) for _ in range(num_layers)])
         # initialize sensibly:
         for p in self.lstm_cells.parameters():
             if len(p.size()) > 1: 
@@ -40,6 +42,11 @@ class StackedLSTMCell(nn.Module):
                 nn.init.xavier_normal(p)
             else:
                 p.data.zero_().add(torch.randn(p.size()).mul(0.001))
+        for p in self.skip_layers.parameters():
+            if len(p.size()) == 2: 
+                nn.init.eye(p)
+            else:
+                p.data.zero_().add(torch.randn(p.size()).mul(0.00001))
 
 
     def forward(self, x, h0s, c0s):
@@ -51,22 +58,29 @@ class StackedLSTMCell(nn.Module):
         * h0s: ...
         * c0s: ...
         Returns:
-        * out: output FloatTensor Variable of shape (batch_size, hidden_dim).
+        * outs: an output FloatTensor Variables of shape (batch_size, hidden_dim); this is the linearized
+        sum of the 
         * h1s: a list of the form (h01,h02,h03...) of dtype FloatTensor and shape (batch_size, hidden_dim).
         * c1s: same dtype/shapes as h0s.
         """
         # sanity checks
         assert (len(c0s) == self.num_layers)
         assert (len(h0s) == self.num_layers)
+        # compute residual layer and append skip connection to `outs` list
         h1s = []
         c1s = []
+        outs = []
         out = x
         for l in range(self.num_layers):
             h1,c1 = self.lstm_cells[l](out, (h0s[l],c0s[l]) )
-            out = self.fc_layers[l](h1)
+            out = self.fc_layers[l](h1) + out
             h1s.append(h1)
             c1s.append(c1)
-        return (out, h1s, c1s)
+            outs.append(self.skip_layers[l](out))
+        # compute sum of skip connections:
+        skip_out = torch.sum(torch.stack(outs,dim=0), dim=0)
+        # return:
+        return (skip_out, h1s, c1s)
 
 
 class RNNByteNetDecoder(nn.Module):
