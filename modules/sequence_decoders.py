@@ -55,31 +55,45 @@ class BeamSearchDecoder(object):
     batch-vector of shape (batch_size, beam_width) indicating the probability of
     each beam for each batch.
     """
-    def __init__(self, batch_size, num_labels, mapping_dict=_DEFAULT_BEAM_MAP_, beam_width=5, cuda=False):
-        """Store parameters and initialize the beam."""
+    def __init__(self, batch_size, num_labels, mapping_dict=_DEFAULT_BEAM_MAP_, beam_width=5, cap_seqs=False, cuda=False):
+        """
+        Store parameters and initialize the beam.
+
+        N.B.: `num_labels` argument should include the special characters.
+        
+        cap_seqs: if True, add <START>/<STOP> labels right before/after the logit sequence.
+        """
         self.beam_width = beam_width
         self.num_labels = num_labels
         self.batch_size = batch_size
+        self.symbol_dict = mapping_dict
+        self.cap_seqs = cap_seqs
         self.beams = [Beam(beam_width, mapping_dict, cuda=cuda) for _ in range(batch_size)]
 
 
     def decode(self, logits):
-        """Decode a batch of logits."""
+        """
+        Decode a batch of logits.
+        
+        Args:
+        * logits: FloatTensor or variable of shape (batch, num_labels, sequence_length).
+        """
         # reshape: (batch, num labels, sequence length)=>(sequence length, batch, num labels)
         logits = logits.data.permute(2,0,1)
 
-        # append <START> and <STOP> columns and vectors to logits:
-        zero_col = torch.zeros(logits.size(0), logits.size(1), 1)
-        logits = torch.cat([logits, zero_col, zero_col], dim=2)
-        start_vec = torch.zeros(self.num_labels+2)
-        start_vec[self.num_labels] = 1.
-        start_vec = start_vec.view(1,1,self.num_labels+2).expand(1, logits.size(1), self.num_labels+2)
-        stop_vec = torch.zeros(self.num_labels+2)
-        stop_vec[self.num_labels+1] = 1.
-        stop_vec = stop_vec.view(1,1,self.num_labels+2).expand(1, logits.size(1), self.num_labels+2)
-        logits = torch.cat([start_vec, logits, stop_vec], dim=0)
+        # (optionally) prepend/append <START> & <STOP> columns and vectors to logits:
+        # (NB.: this presumes `logits` includes extra label dimensions to accommodate start/stop.)
+        if self.cap_seqs:
+            zero_col = torch.zeros(logits.size(0), logits.size(1), 1)
+            start_vec = torch.zeros(self.num_labels)
+            start_vec[self.symbol_dict['<s>']] = 1.
+            start_vec = start_vec.view(1,1,self.num_labels).expand(1, logits.size(1), self.num_labels)
+            stop_vec = torch.zeros(self.num_labels)
+            stop_vec[self.symbol_dict['</s>']] = 1.
+            stop_vec = stop_vec.view(1,1,self.num_labels).expand(1, logits.size(1), self.num_labels)
+            logits = torch.cat([start_vec, logits, stop_vec], dim=0)
 
-        # loop through each timestep of logits (after appending <S> & </S>) and update beams:
+        # loop through each timestep of logits (after possibly appending <S> & </S>) and update beams:
         for k in range(logits.size(0)):
             label_lkhd = F.softmax( logits[k].view(self.batch_size, logits.size(2)) ).data
             label_lkhd = label_lkhd.unsqueeze(1).expand(self.batch_size, self.beam_width, logits.size(2))
