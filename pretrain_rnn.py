@@ -185,14 +185,14 @@ def main(cfg, cuda=torch.cuda.is_available()):
         val_losses = []
         base_seqs = []
         val_data_iter = get_iterator()
-        for _ in range(2): # [[FIX: 2->10]]
+        for _ in range(10):
             # get data:
             val_sample = val_data_iter[0]
             val_loss, transcriptions = model_loss(val_sample)
             val_losses.append(val_loss.data[0])
             sequences = val_sample[1]
             base_seqs.append( (sequences, transcriptions) )
-        avg_val_loss = sum(val_losses) / 2 # [[FIX: 2->10]]
+        avg_val_loss = sum(val_losses) / 10
 
         ### send average validation loss to LR scheduler:
         sched.step(avg_val_loss)
