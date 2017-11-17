@@ -129,7 +129,7 @@ def main(cfg, cuda=torch.cuda.is_available()):
         return loss, transcriptions
     
     #-- optimizer:
-    opt = optim.Adadelta([{'params': encoder.parameters(), 'lr': 0.002},
+    opt = optim.Adadelta([{'params': encoder.parameters(), 'lr': 0.0001},
                           {'params': decoder.parameters(), 'lr': 0.0001}])
     print("Constructed optimizer.")
 
