@@ -129,8 +129,8 @@ def main(cfg, cuda=torch.cuda.is_available()):
         return loss, transcriptions
     
     #-- optimizer:
-    opt = optim.Adamax([{'params': encoder.parameters(), 'lr': 0.0002},
-                        {'params': decoder.parameters(), 'lr': 0.0002}])
+    opt = optim.Adagrad([{'params': encoder.parameters(), 'lr': 0.0001},
+                         {'params': decoder.parameters(), 'lr': 0.0001}])
     print("Constructed optimizer.")
 
     # -- scheduler:
