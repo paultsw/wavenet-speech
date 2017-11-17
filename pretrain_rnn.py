@@ -125,8 +125,8 @@ def main(cfg, cuda=torch.cuda.is_available()):
         label_lengths = sequence_lengths.int().cpu()
         labels = to_concat(sequences, label_lengths).int().cpu()
         loss = ctc_loss_fn(transcriptions, labels, transcription_lengths, label_lengths)
-        avg_loss = loss / transcriptions.size(0)
-        return avg_loss, transcriptions
+        #avg_loss = loss / transcriptions.size(0)
+        return loss, transcriptions
     
     #-- optimizer:
     opt = optim.Adadelta([{'params': encoder.parameters(), 'lr': 0.002},
