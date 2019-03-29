@@ -19,7 +19,8 @@ from warpctc_pytorch import CTCLoss
 # custom modules/datasets:
 from modules.raw_ctcnet import RawCTCNet
 from modules.rnn_decoder import RNNByteNetDecoder
-from modules.sequence_decoders import argmax_decode, BeamSearchDecoder, labels2strings
+from modules.sequence_decoders import argmax_decode, labels2strings
+from ctcdecode import CTCBeamDecoder
 from utils.raw_signal_generator import RawSignalGenerator
 # torchnet imports:
 import torchnet as tnt
@@ -109,6 +110,9 @@ def main(cfg, cuda=torch.cuda.is_available()):
         print("CUDA detected... Placed encoder and decoder on GPU memory.")
 
     #-- loss function & computation:
+    # [(Un-)comment one of these functions below.]
+    # CTC loss function:
+    """
     ctc_loss_fn = CTCLoss()
     print("Constructed loss function.")
     def model_loss(sample):
@@ -127,6 +131,22 @@ def main(cfg, cuda=torch.cuda.is_available()):
         loss = ctc_loss_fn(transcriptions, labels, transcription_lengths, label_lengths)
         #avg_loss = loss / transcriptions.size(0)
         return loss, transcriptions
+    """
+    # Cross Entropy loss function:
+    ce_loss_fn = nn.CrossEntropyLoss()
+    def model_loss(sample):
+        # unpack inputs:
+        signals, sequences, signal_lengths, sequence_lengths = sample
+        if cuda: signals = signals.cuda()
+        # get encodings from RawCTCNet:
+        encoded_seq = encoder(signals.unsqueeze(1))
+        # decode sequence into nucleotides via bytenet decoder:
+        decoded_seq, decoded_lengths = decoder.unfold(encoded_seq)
+        loss = 0.0
+        for k in range(max(sequences.size(None), decoded_seq.size(None))): # [TODO]
+            # ... TODO
+        #avg_loss = loss / transcriptions.size(0)
+        return loss, transcriptions
     
     #-- optimizer:
     opt = optim.Adagrad([{'params': encoder.parameters(), 'lr': 0.0001},
@@ -138,7 +158,7 @@ def main(cfg, cuda=torch.cuda.is_available()):
                                            verbose=False, threshold=1e-4, threshold_mode='rel')
     print("Constructed LR scheduler (Plateau)")
 
-    #-- beam search: [TODO: fix this to make START/STOP/PAD optional]
+    #-- beam search: [TODO: fix this to make START/STOP/PAD optional] # TODO: FIX THIS TO USE CTC-BEAM-DECODER CLASS
     beam_search = BeamSearchDecoder(cfg['batch_size'], num_labels, beam_width=4, cap_seqs=False, cuda=cuda)
     print("Constructed beam search decoder.")
 
